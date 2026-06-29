@@ -42,6 +42,7 @@ class Notebane(commands.AutoShardedBot):
         # Load cog extensions
         await self.load_extension("notebane.cogs.core")
         await self.load_extension("notebane.cogs.voice")
+        await self.load_extension("notebane.cogs.music")
         # Sync slash commands globally
         synced = await self.tree.sync()
         log.info("Synced %d slash commands", len(synced))
