@@ -118,6 +118,7 @@ class Notebane(commands.AutoShardedBot):
     async def setup_hook(self) -> None:
         from notebane.metrics import start_metrics_server
         from notebane.player import GuildPlayerManager
+        from notebane.ytdl_updater import start_ytdlp_updater
 
         self.players: GuildPlayerManager = GuildPlayerManager()
 
@@ -130,6 +131,7 @@ class Notebane(commands.AutoShardedBot):
         log.info("Synced %d slash commands", len(synced))
 
         await start_metrics_server(self, self.players)
+        self._ytdlp_updater_task = await start_ytdlp_updater()
 
     async def on_ready(self) -> None:
         log.info(
@@ -152,6 +154,10 @@ class Notebane(commands.AutoShardedBot):
                 if isinstance(exc, Exception):
                     log.warning("Error disconnecting player during shutdown: %s", exc)
         log.info("All voice clients disconnected — closing gateway")
+
+        if task := getattr(self, "_ytdlp_updater_task", None):
+            task.cancel()
+
         await super().close()
 
 
