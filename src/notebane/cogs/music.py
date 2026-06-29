@@ -11,7 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from notebane.cogs.voice import assert_bot_perms, assert_user_in_voice
+from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve
 
@@ -153,19 +153,11 @@ class MusicCog(commands.Cog, name="Music"):
         # Auto-join if not in this channel
         player = self.players.get(interaction.guild_id, channel.id)
         if player is None:
-            if not await assert_bot_perms(interaction, channel):
+            player = await _connect_to_channel(
+                interaction, channel, self.players, on_track_start=self._on_track_start
+            )
+            if player is None:
                 return
-            try:
-                vc = await channel.connect(timeout=10.0, reconnect=True)
-            except discord.ClientException:
-                await interaction.followup.send("❌ I'm already in another voice channel. Use `/leave` first.")
-                return
-            except TimeoutError:
-                await interaction.followup.send("❌ Connection timed out. Try again.")
-                return
-
-            player = GuildPlayer(vc, on_track_start=self._on_track_start)
-            self.players.set(player)
             await player.start()
         elif player._play_task is None or player._play_task.done():
             player._on_track_start = self._on_track_start
