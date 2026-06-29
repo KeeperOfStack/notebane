@@ -35,8 +35,13 @@ class Notebane(commands.AutoShardedBot):
         )
 
     async def setup_hook(self) -> None:
+        # Shared player manager — stored on bot so all cogs can access it
+        from notebane.player import GuildPlayerManager
+        self.players: GuildPlayerManager = GuildPlayerManager()
+
         # Load cog extensions
         await self.load_extension("notebane.cogs.core")
+        await self.load_extension("notebane.cogs.voice")
         # Sync slash commands globally
         synced = await self.tree.sync()
         log.info("Synced %d slash commands", len(synced))

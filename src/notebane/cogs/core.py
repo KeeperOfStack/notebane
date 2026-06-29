@@ -24,6 +24,10 @@ class CoreCog(commands.Cog, name="Core"):
         embed.add_field(name="Guilds", value=str(len(self.bot.guilds)), inline=True)
         embed.add_field(name="Shards", value=str(self.bot.shard_count or 1), inline=True)
         embed.add_field(name="Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
+        # Show active player count if available
+        players = getattr(self.bot, "players", None)
+        if players is not None:
+            embed.add_field(name="Active players", value=str(players.total), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
