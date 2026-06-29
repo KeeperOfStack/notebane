@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Add Notebane</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; height: 100vh;
+           background: #1a1a2e; color: #fff; margin: 0; }
+    h1 { margin-bottom: 8px; }
+    p { color: #aaa; margin-bottom: 24px; }
+    input { padding: 12px 16px; border-radius: 8px; border: none;
+            font-size: 16px; width: 280px; margin-bottom: 12px; }
+    button { padding: 12px 32px; background: #5865f2; color: white;
+             border: none; border-radius: 8px; font-size: 16px;
+             cursor: pointer; width: 312px; }
+    button:hover { background: #4752c4; }
+    #msg { margin-top: 16px; color: #ff6b6b; }
+  </style>
+</head>
+<body>
+  <h1>🎵 Add Notebane</h1>
+  <p>Enter the invite password to add the bot to your server.</p>
+  <input type="password" id="pw" placeholder="Password" />
+  <button onclick="submit()">Add to Discord</button>
+  <div id="msg"></div>
+
+  <script>
+    const WORKER_URL = 'https://notebane.nyxcircuit.workers.dev';
+
+    async function submit() {
+      const password = document.getElementById('pw').value;
+      const msg = document.getElementById('msg');
+      msg.textContent = 'Checking...';
+
+      try {
+        const res = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.url) {
+          window.location.href = data.url;
+        } else {
+          msg.textContent = '❌ Incorrect password.';
+        }
+      } catch (e) {
+        msg.textContent = '❌ Something went wrong. Try again.';
+      }
+    }
+
+    document.getElementById('pw').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submit();
+    });
+  </script>
+</body>
+</html>
