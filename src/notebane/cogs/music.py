@@ -1,9 +1,11 @@
-"""Music cog — /play and now-playing embeds."""
+"""Music cog — /play, /skip, /stop, /pause, /resume, /shuffle, /loop, /nowplaying, /queue, /remove."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import random
 
 import discord
 from discord import app_commands
@@ -15,13 +17,19 @@ from notebane.ytdl import YTDLError, resolve
 
 log = logging.getLogger("notebane.music")
 
+QUEUE_PAGE_SIZE = 10  # tracks per /queue page
 
-def _now_playing_embed(track: Track) -> discord.Embed:
-    """Build a 'now playing' embed for a track."""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Embed helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _now_playing_embed(track: Track, *, paused: bool = False) -> discord.Embed:
+    status = "⏸ Paused" if paused else "🎵 Now Playing"
     embed = discord.Embed(
-        title="🎵 Now Playing",
+        title=status,
         description=f"**[{track.title}]({track.webpage_url})**",
-        colour=discord.Colour.green(),
+        colour=discord.Colour.yellow() if paused else discord.Colour.green(),
     )
     embed.add_field(name="Duration", value=track.duration_fmt(), inline=True)
     embed.add_field(name="Requested by", value=track.requester, inline=True)
@@ -31,7 +39,6 @@ def _now_playing_embed(track: Track) -> discord.Embed:
 
 
 def _queued_embed(track: Track, position: int) -> discord.Embed:
-    """Build a 'added to queue' embed."""
     embed = discord.Embed(
         title="➕ Added to Queue",
         description=f"**[{track.title}]({track.webpage_url})**",
@@ -45,19 +52,82 @@ def _queued_embed(track: Track, position: int) -> discord.Embed:
     return embed
 
 
+def _queue_embed(player: GuildPlayer, page: int = 1) -> discord.Embed:
+    """Paginated queue listing."""
+    tracks = player.queue_list()
+    total = len(tracks)
+    total_pages = max(1, math.ceil(total / QUEUE_PAGE_SIZE))
+    page = max(1, min(page, total_pages))
+
+    embed = discord.Embed(title="📋 Queue", colour=discord.Colour.blurple())
+
+    # Current track
+    if player.current:
+        t = player.current
+        loop_tag = " 🔁" if player.loop_track else ""
+        embed.add_field(
+            name=f"▶ Now Playing{loop_tag}",
+            value=f"[{t.title}]({t.webpage_url}) `{t.duration_fmt()}`\n*Requested by {t.requester}*",
+            inline=False,
+        )
+    else:
+        embed.add_field(name="▶ Now Playing", value="Nothing", inline=False)
+
+    # Queue page
+    if total == 0:
+        embed.add_field(name="Up Next", value="Queue is empty.", inline=False)
+    else:
+        start = (page - 1) * QUEUE_PAGE_SIZE
+        end = start + QUEUE_PAGE_SIZE
+        lines = []
+        for i, t in enumerate(tracks[start:end], start=start + 1):
+            lines.append(f"`{i}.` [{t.title}]({t.webpage_url}) `{t.duration_fmt()}` — *{t.requester}*")
+        embed.add_field(name=f"Up Next (page {page}/{total_pages})", value="\n".join(lines), inline=False)
+
+    loop_tag = " • 🔁 Queue loop ON" if player.loop_queue else ""
+    embed.set_footer(text=f"{total} track{'s' if total != 1 else ''} in queue{loop_tag}")
+    return embed
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Guard helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _get_player(
+    interaction: discord.Interaction,
+    players: GuildPlayerManager,
+    *,
+    require_playing: bool = False,
+) -> GuildPlayer | None:
+    """Fetch the active player for this guild, sending an error if absent."""
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Server-only command.", ephemeral=True)
+        return None
+    player = players.get_any(interaction.guild.id)
+    if player is None:
+        await interaction.response.send_message("❌ I'm not in a voice channel.", ephemeral=True)
+        return None
+    if require_playing and not (player.is_playing or player.is_paused):
+        await interaction.response.send_message("❌ Nothing is playing right now.", ephemeral=True)
+        return None
+    return player
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cog
+# ──────────────────────────────────────────────────────────────────────────────
+
 class MusicCog(commands.Cog, name="Music"):
     """Audio playback commands."""
 
     def __init__(self, bot: commands.AutoShardedBot, players: GuildPlayerManager) -> None:
         self.bot = bot
         self.players = players
-        # channel_id → discord.TextChannel for now-playing messages
         self._text_channels: dict[int, discord.TextChannel] = {}
 
-    # ── Now-playing callback (called from play loop, non-async) ──────────────
+    # ── Now-playing callback (non-async, schedules a task) ───────────────────
 
     def _on_track_start(self, player: GuildPlayer, track: Track) -> None:
-        """Schedule a now-playing embed to the originating text channel."""
         text_channel = self._text_channels.get(player.channel_id)
         if text_channel is None:
             return
@@ -76,23 +146,19 @@ class MusicCog(commands.Cog, name="Music"):
             await interaction.followup.send("❌ This command only works in a server.")
             return
 
-        # Ensure user is in a voice channel
         channel = await assert_user_in_voice(interaction)
         if channel is None:
             return
 
-        # Auto-join if not already connected to this channel
+        # Auto-join if not in this channel
         player = self.players.get(interaction.guild_id, channel.id)
         if player is None:
-            # Check perms before joining
             if not await assert_bot_perms(interaction, channel):
                 return
             try:
                 vc = await channel.connect(timeout=10.0, reconnect=True)
             except discord.ClientException:
-                await interaction.followup.send(
-                    "❌ I'm already in another voice channel. Use `/leave` first."
-                )
+                await interaction.followup.send("❌ I'm already in another voice channel. Use `/leave` first.")
                 return
             except TimeoutError:
                 await interaction.followup.send("❌ Connection timed out. Try again.")
@@ -101,23 +167,16 @@ class MusicCog(commands.Cog, name="Music"):
             player = GuildPlayer(vc, on_track_start=self._on_track_start)
             self.players.set(player)
             await player.start()
-            log.info("Auto-joined guild=%d channel=%s (%d)", interaction.guild_id, channel.name, channel.id)
         elif player._play_task is None or player._play_task.done():
-            # Re-attach callback in case cog was reloaded
             player._on_track_start = self._on_track_start
             await player.start()
 
-        # Remember this text channel for now-playing messages
         if isinstance(interaction.channel, discord.TextChannel):
             self._text_channels[channel.id] = interaction.channel
 
-        # Resolve the track (runs yt-dlp in executor — non-blocking)
         await interaction.followup.send(f"🔍 Searching for `{query}`…")
         try:
-            track = await resolve(
-                query,
-                requester=interaction.user.display_name,
-            )
+            track = await resolve(query, requester=interaction.user.display_name)
         except YTDLError as exc:
             await interaction.edit_original_response(content=f"❌ Could not find: `{query}`\n> {exc}")
             return
@@ -126,19 +185,165 @@ class MusicCog(commands.Cog, name="Music"):
             await interaction.edit_original_response(content=f"❌ Unexpected error: {exc}")
             return
 
-        # Enqueue
         await player.queue.put(track)
         queue_size = player.queue.qsize()
 
         if player.current is not None:
-            # Something is already playing — show "queued" embed
-            await interaction.edit_original_response(
-                content=None,
-                embed=_queued_embed(track, queue_size),
-            )
+            await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
         else:
-            # Play loop will pick it up immediately and send now-playing via callback
             await interaction.edit_original_response(content="▶️ Starting playback…")
+
+    # ── /skip ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="skip", description="Skip the current track.")
+    async def skip(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players, require_playing=True)
+        if player is None:
+            return
+        title = player.current.title if player.current else "current track"
+        await player.skip()
+        await interaction.response.send_message(f"⏭ Skipped **{title}**.", ephemeral=True)
+
+    # ── /stop ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="stop", description="Stop playback and clear the queue.")
+    async def stop(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        await player.stop()
+        await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
+
+    # ── /pause ────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="pause", description="Pause playback.")
+    async def pause(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players, require_playing=True)
+        if player is None:
+            return
+        if player.pause():
+            await interaction.response.send_message("⏸ Paused.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Already paused.", ephemeral=True)
+
+    # ── /resume ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="resume", description="Resume playback.")
+    async def resume(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        if player.resume():
+            await interaction.response.send_message("▶️ Resumed.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Not paused.", ephemeral=True)
+
+    # ── /shuffle ──────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="shuffle", description="Shuffle the queue.")
+    async def shuffle(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        tracks = player.queue_list()
+        if len(tracks) < 2:
+            await interaction.response.send_message("❌ Need at least 2 tracks in the queue to shuffle.", ephemeral=True)
+            return
+        random.shuffle(tracks)
+        # Rebuild the queue with shuffled order
+        while not player.queue.empty():
+            try:
+                player.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for t in tracks:
+            await player.queue.put(t)
+        await interaction.response.send_message(f"🔀 Shuffled {len(tracks)} tracks.", ephemeral=True)
+
+    # ── /loop ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="loop", description="Toggle loop mode: track, queue, or off.")
+    @app_commands.describe(mode="track = loop current song, queue = loop whole queue, off = disable")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="track", value="track"),
+        app_commands.Choice(name="queue", value="queue"),
+        app_commands.Choice(name="off", value="off"),
+    ])
+    async def loop(self, interaction: discord.Interaction, mode: str) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        if mode == "track":
+            player.loop_track = True
+            player.loop_queue = False
+            await interaction.response.send_message("🔂 Looping current track.", ephemeral=True)
+        elif mode == "queue":
+            player.loop_queue = True
+            player.loop_track = False
+            await interaction.response.send_message("🔁 Looping queue.", ephemeral=True)
+        else:
+            player.loop_track = False
+            player.loop_queue = False
+            await interaction.response.send_message("➡️ Loop disabled.", ephemeral=True)
+
+    # ── /nowplaying ───────────────────────────────────────────────────────────
+
+    @app_commands.command(name="nowplaying", description="Show what's currently playing.")
+    async def nowplaying(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players, require_playing=True)
+        if player is None:
+            return
+        if player.current is None:
+            await interaction.response.send_message("❌ Nothing is playing right now.", ephemeral=True)
+            return
+        embed = _now_playing_embed(player.current, paused=player.is_paused)
+        if player.loop_track:
+            embed.set_footer(text="🔂 Track loop on")
+        elif player.loop_queue:
+            embed.set_footer(text="🔁 Queue loop on")
+        await interaction.response.send_message(embed=embed)
+
+    # ── /queue ────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="queue", description="Show the track queue.")
+    @app_commands.describe(page="Page number (default 1)")
+    async def queue(self, interaction: discord.Interaction, page: int = 1) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        await interaction.response.send_message(embed=_queue_embed(player, page))
+
+    # ── /remove ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="remove", description="Remove a track from the queue by its position.")
+    @app_commands.describe(position="Queue position number (see /queue)")
+    async def remove(self, interaction: discord.Interaction, position: int) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        tracks = player.queue_list()
+        if not tracks:
+            await interaction.response.send_message("❌ The queue is empty.", ephemeral=True)
+            return
+        idx = position - 1
+        if idx < 0 or idx >= len(tracks):
+            await interaction.response.send_message(
+                f"❌ Invalid position. Queue has {len(tracks)} track{'s' if len(tracks) != 1 else ''}.",
+                ephemeral=True,
+            )
+            return
+        removed = tracks.pop(idx)
+        # Rebuild queue
+        while not player.queue.empty():
+            try:
+                player.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for t in tracks:
+            await player.queue.put(t)
+        await interaction.response.send_message(
+            f"🗑️ Removed **{removed.title}** from the queue.", ephemeral=True
+        )
 
 
 async def setup(bot: commands.AutoShardedBot) -> None:

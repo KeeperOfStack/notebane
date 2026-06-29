@@ -152,6 +152,9 @@ class GuildPlayer:
             # Loop-track: re-queue same track at front
             if self.loop_track and self.current is not None:
                 await self.queue.put(track)
+            elif self.loop_queue and track is not None:
+                # Loop-queue: re-add to end so the whole queue cycles
+                await self.queue.put(track)
 
             self.current = None
 
@@ -161,6 +164,24 @@ class GuildPlayer:
         """Skip the current track."""
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()   # triggers _after_play → _track_done.set()
+
+    def pause(self) -> bool:
+        """Pause playback. Returns True if paused, False if nothing was playing."""
+        if self.voice_client.is_playing():
+            self.voice_client.pause()
+            return True
+        return False
+
+    def resume(self) -> bool:
+        """Resume playback. Returns True if resumed, False if nothing was paused."""
+        if self.voice_client.is_paused():
+            self.voice_client.resume()
+            return True
+        return False
+
+    def queue_list(self) -> list[Track]:
+        """Snapshot of the queue as a list (index 0 = next up)."""
+        return list(self.queue._queue)  # type: ignore[attr-defined]
 
     async def stop(self) -> None:
         """Stop playback and clear the queue."""
