@@ -1,0 +1,22 @@
+services:
+  notebane:
+    build: .
+    image: notebane:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    # No ports needed — Discord bot connects outbound only
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Resource guardrails (adjust to your hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M

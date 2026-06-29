@@ -1,0 +1,9 @@
+# Core
+discord.py[voice]==2.7.1
+yt-dlp==2026.6.9
+
+# Async subprocess (yt-dlp extraction runs in executor, but PyNaCl needed for voice)
+PyNaCl==1.5.0
+
+# Linting (dev-only, not installed in Docker image)
+# ruff>=0.4.0

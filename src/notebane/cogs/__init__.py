@@ -1,0 +1,1 @@
+"""Notebane cogs package."""
