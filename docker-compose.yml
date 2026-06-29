@@ -5,7 +5,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # No ports needed — Discord bot connects outbound only
+    # Uncomment to expose Prometheus /metrics endpoint (set METRICS_PORT in .env too)
+    # ports:
+    #   - "9090:9090"
     logging:
       driver: "json-file"
       options:

@@ -22,30 +22,74 @@ def setup_logging() -> None:
     )
 
 
+def _apply_env_overrides() -> None:
+    """Apply environment variable overrides to runtime constants."""
+    import notebane.player as _player
+    import notebane.ytdl as _ytdl
+
+    # FFmpeg options overrides
+    before = os.getenv("FFMPEG_BEFORE_OPTIONS", "").strip()
+    if before:
+        _player.FFMPEG_BEFORE_OPTIONS = before
+        log.info("FFMPEG_BEFORE_OPTIONS overridden: %s", before)
+
+    extra = os.getenv("FFMPEG_OPTIONS", "").strip()
+    if extra:
+        _player.FFMPEG_OPTIONS = extra
+        log.info("FFMPEG_OPTIONS overridden: %s", extra)
+
+    # yt-dlp cookie file
+    cookiefile = os.getenv("YTDL_COOKIEFILE", "").strip()
+    if cookiefile:
+        if not os.path.isfile(cookiefile):
+            log.warning("YTDL_COOKIEFILE=%r does not exist — cookies disabled", cookiefile)
+        else:
+            _ytdl.YTDL_OPTS["cookiefile"] = cookiefile
+            log.info("yt-dlp cookiefile: %s", cookiefile)
+
+
 class Notebane(commands.AutoShardedBot):
     """Main bot class with AutoSharding for 100+ guild scale."""
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.voice_states = True
+
+        # Optional manual shard count override
+        shard_count: int | None = None
+        sc_env = os.getenv("SHARD_COUNT", "").strip()
+        if sc_env:
+            try:
+                shard_count = int(sc_env)
+                log.info("Using manual shard count: %d", shard_count)
+            except ValueError:
+                log.warning("SHARD_COUNT=%r is not a valid integer — using auto", sc_env)
+
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,
             help_command=None,
+            shard_count=shard_count,
         )
 
     async def setup_hook(self) -> None:
-        # Shared player manager — stored on bot so all cogs can access it
         from notebane.player import GuildPlayerManager
+        from notebane.metrics import start_metrics_server
+
+        # Shared player manager
         self.players: GuildPlayerManager = GuildPlayerManager()
 
         # Load cog extensions
         await self.load_extension("notebane.cogs.core")
         await self.load_extension("notebane.cogs.voice")
         await self.load_extension("notebane.cogs.music")
+
         # Sync slash commands globally
         synced = await self.tree.sync()
         log.info("Synced %d slash commands", len(synced))
+
+        # Start optional metrics server (no-op if METRICS_PORT not set)
+        await start_metrics_server(self, self.players)
 
     async def on_ready(self) -> None:
         log.info(
@@ -63,6 +107,8 @@ async def main() -> None:
     if not token:
         log.error("DISCORD_TOKEN environment variable is not set")
         sys.exit(1)
+
+    _apply_env_overrides()
 
     async with Notebane() as bot:
         await bot.start(token)

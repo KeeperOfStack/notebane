@@ -133,6 +133,13 @@ class GuildPlayer:
                 except Exception:
                     log.exception("on_track_start callback raised")
 
+            # Record metric
+            try:
+                from notebane.metrics import record_track_played
+                record_track_played()
+            except Exception:
+                pass
+
             try:
                 source = discord.FFmpegOpusAudio(
                     track.url,

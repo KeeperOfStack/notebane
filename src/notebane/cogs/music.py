@@ -170,6 +170,8 @@ class MusicCog(commands.Cog, name="Music"):
         try:
             track = await resolve(query, requester=interaction.user.display_name)
         except YTDLError as exc:
+            from notebane.metrics import record_ytdl_error
+            record_ytdl_error()
             await interaction.edit_original_response(content=f"❌ Could not find: `{query}`\n> {exc}")
             return
         except Exception as exc:
