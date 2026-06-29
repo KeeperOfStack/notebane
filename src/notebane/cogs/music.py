@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
+from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve
 
@@ -172,11 +173,17 @@ class MusicCog(commands.Cog, name="Music"):
         except YTDLError as exc:
             from notebane.metrics import record_ytdl_error
             record_ytdl_error()
-            await interaction.edit_original_response(content=f"❌ Could not find: `{query}`\n> {exc}")
+            await interaction.edit_original_response(
+                content=None,
+                embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+            )
             return
         except Exception as exc:
             log.exception("Unexpected resolve error for %r", query)
-            await interaction.edit_original_response(content=f"❌ Unexpected error: {exc}")
+            await interaction.edit_original_response(
+                content=None,
+                embed=err_embed(str(exc), title="Unexpected Error"),
+            )
             return
 
         await player.queue.put(track)
