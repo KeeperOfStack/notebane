@@ -1,0 +1,35 @@
+# Production compose — uses pre-built GHCR image instead of local build.
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Create .env from .env.example and fill in DISCORD_TOKEN + APPLICATION_ID
+#   2. (Optional) Set METRICS_PORT=9090 and uncomment the ports section below
+#   3. Pull latest image:
+#        docker pull ghcr.io/keeperofstack/notebane:latest
+
+services:
+  notebane:
+    image: ghcr.io/keeperofstack/notebane:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LOG_FORMAT: json         # structured JSON logs for aggregators
+    # Uncomment to expose Prometheus /metrics + /health (set METRICS_PORT in .env)
+    # ports:
+    #   - "9090:9090"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 30s     # allow graceful VC disconnect before SIGKILL
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M

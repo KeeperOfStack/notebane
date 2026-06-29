@@ -1,9 +1,12 @@
 """Notebane entrypoint."""
 
 import asyncio
+import json
 import logging
+import logging.handlers
 import os
 import sys
+import time
 
 import discord
 from discord.ext import commands
@@ -12,41 +15,82 @@ from discord.ext import commands
 log = logging.getLogger("notebane")
 
 
-def setup_logging() -> None:
-    level = os.getenv("LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        stream=sys.stdout,
-    )
+# ──────────────────────────────────────────────────────────────────────────────
+# Structured JSON formatter (production)
+# ──────────────────────────────────────────────────────────────────────────────
 
+class JsonFormatter(logging.Formatter):
+    """Emit one JSON object per log line — friendly to log aggregators."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        doc = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            doc["exc"] = self.formatException(record.exc_info)
+        return json.dumps(doc, ensure_ascii=False)
+
+
+def setup_logging() -> None:
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    fmt = os.getenv("LOG_FORMAT", "json").lower()  # "json" | "text"
+
+    handler = logging.StreamHandler(sys.stdout)
+    if fmt == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.handlers.clear()
+    root.addHandler(handler)
+
+    # Quieten noisy discord.py internal loggers unless debug requested
+    if level > logging.DEBUG:
+        logging.getLogger("discord").setLevel(logging.WARNING)
+        logging.getLogger("discord.http").setLevel(logging.WARNING)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Env overrides
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _apply_env_overrides() -> None:
-    """Apply environment variable overrides to runtime constants."""
     import notebane.player as _player
     import notebane.ytdl as _ytdl
 
-    # FFmpeg options overrides
     before = os.getenv("FFMPEG_BEFORE_OPTIONS", "").strip()
     if before:
         _player.FFMPEG_BEFORE_OPTIONS = before
-        log.info("FFMPEG_BEFORE_OPTIONS overridden: %s", before)
+        log.info("FFMPEG_BEFORE_OPTIONS overridden")
 
     extra = os.getenv("FFMPEG_OPTIONS", "").strip()
     if extra:
         _player.FFMPEG_OPTIONS = extra
-        log.info("FFMPEG_OPTIONS overridden: %s", extra)
+        log.info("FFMPEG_OPTIONS overridden")
 
-    # yt-dlp cookie file
     cookiefile = os.getenv("YTDL_COOKIEFILE", "").strip()
     if cookiefile:
         if not os.path.isfile(cookiefile):
             log.warning("YTDL_COOKIEFILE=%r does not exist — cookies disabled", cookiefile)
         else:
             _ytdl.YTDL_OPTS["cookiefile"] = cookiefile
-            log.info("yt-dlp cookiefile: %s", cookiefile)
+            log.info("yt-dlp cookiefile configured")
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bot
+# ──────────────────────────────────────────────────────────────────────────────
 
 class Notebane(commands.AutoShardedBot):
     """Main bot class with AutoSharding for 100+ guild scale."""
@@ -55,7 +99,6 @@ class Notebane(commands.AutoShardedBot):
         intents = discord.Intents.default()
         intents.voice_states = True
 
-        # Optional manual shard count override
         shard_count: int | None = None
         sc_env = os.getenv("SHARD_COUNT", "").strip()
         if sc_env:
@@ -73,23 +116,19 @@ class Notebane(commands.AutoShardedBot):
         )
 
     async def setup_hook(self) -> None:
-        from notebane.player import GuildPlayerManager
         from notebane.metrics import start_metrics_server
+        from notebane.player import GuildPlayerManager
 
-        # Shared player manager
         self.players: GuildPlayerManager = GuildPlayerManager()
 
-        # Load cog extensions
         await self.load_extension("notebane.cogs.core")
         await self.load_extension("notebane.cogs.voice")
         await self.load_extension("notebane.cogs.music")
         await self.load_extension("notebane.cogs.search")
 
-        # Sync slash commands globally
         synced = await self.tree.sync()
         log.info("Synced %d slash commands", len(synced))
 
-        # Start optional metrics server (no-op if METRICS_PORT not set)
         await start_metrics_server(self, self.players)
 
     async def on_ready(self) -> None:
@@ -100,6 +139,25 @@ class Notebane(commands.AutoShardedBot):
             self.shard_count or 1,
         )
 
+    async def close(self) -> None:
+        """Graceful shutdown — disconnect all voice clients before closing."""
+        log.info("Shutdown initiated — disconnecting %d active player(s)…", self.players.total)
+        players = list(self.players._players.values())
+        if players:
+            results = await asyncio.gather(
+                *[p.disconnect() for p in players],
+                return_exceptions=True,
+            )
+            for exc in results:
+                if isinstance(exc, Exception):
+                    log.warning("Error disconnecting player during shutdown: %s", exc)
+        log.info("All voice clients disconnected — closing gateway")
+        await super().close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entrypoint
+# ──────────────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
     setup_logging()
