@@ -39,6 +39,44 @@ def _now_playing_embed(track: Track, *, paused: bool = False) -> discord.Embed:
     return embed
 
 
+class NowPlayingView(discord.ui.View):
+    """Persistent control buttons attached to the Now Playing message."""
+
+    def __init__(self, player: "GuildPlayer") -> None:
+        super().__init__(timeout=None)
+        self.player = player
+
+    @discord.ui.button(emoji="⏸", style=discord.ButtonStyle.secondary, custom_id="np_pause_resume")
+    async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.player.is_paused:
+            self.player.resume()
+            button.emoji = "⏸"
+            await interaction.response.edit_message(
+                embed=_now_playing_embed(self.player.current) if self.player.current else None,
+                view=self,
+            )
+        elif self.player.is_playing:
+            self.player.pause()
+            button.emoji = "▶"
+            await interaction.response.edit_message(
+                embed=_now_playing_embed(self.player.current, paused=True) if self.player.current else None,
+                view=self,
+            )
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.secondary, custom_id="np_skip")
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        title = self.player.current.title if self.player.current else "current track"
+        await self.player.skip()
+        await interaction.response.send_message(f"⏭ Skipped **{title}**.", ephemeral=True)
+
+    @discord.ui.button(emoji="⏹", style=discord.ButtonStyle.danger, custom_id="np_stop")
+    async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.player.stop()
+        await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
+
+
 def _queued_embed(track: Track, position: int) -> discord.Embed:
     embed = discord.Embed(
         title="➕ Added to Queue",
@@ -113,17 +151,25 @@ async def _get_player(
     players: GuildPlayerManager,
     *,
     require_playing: bool = False,
+    deferred: bool = False,
 ) -> GuildPlayer | None:
     """Fetch the active player for this guild, sending an error if absent."""
+
+    async def _send_error(msg: str) -> None:
+        if deferred:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+
     if not interaction.guild:
-        await interaction.response.send_message("❌ Server-only command.", ephemeral=True)
+        await _send_error("❌ Server-only command.")
         return None
     player = players.get_any(interaction.guild.id)
     if player is None:
-        await interaction.response.send_message("❌ I'm not in a voice channel.", ephemeral=True)
+        await _send_error("❌ I'm not in a voice channel.")
         return None
     if require_playing and not (player.is_playing or player.is_paused):
-        await interaction.response.send_message("❌ Nothing is playing right now.", ephemeral=True)
+        await _send_error("❌ Nothing is playing right now.")
         return None
     return player
 
@@ -146,8 +192,9 @@ class MusicCog(commands.Cog, name="Music"):
         text_channel = self._text_channels.get(player.channel_id)
         if text_channel is None:
             return
+        view = NowPlayingView(player)
         asyncio.get_event_loop().create_task(
-            text_channel.send(embed=_now_playing_embed(track))
+            text_channel.send(embed=_now_playing_embed(track), view=view)
         )
 
     # ── Shared: ensure player is ready ────────────────────────────────────────
@@ -487,10 +534,11 @@ class MusicCog(commands.Cog, name="Music"):
     @app_commands.command(name="queue", description="Show the track queue.")
     @app_commands.describe(page="Page number (default 1)")
     async def queue(self, interaction: discord.Interaction, page: int = 1) -> None:
-        player = await _get_player(interaction, self.players)
+        await interaction.response.defer()
+        player = await _get_player(interaction, self.players, deferred=True)
         if player is None:
             return
-        await interaction.response.send_message(embed=_queue_embed(player, page))
+        await interaction.followup.send(embed=_queue_embed(player, page))
 
     # ── /remove ───────────────────────────────────────────────────────────────
 
