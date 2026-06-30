@@ -98,6 +98,7 @@ class Notebane(commands.AutoShardedBot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.voice_states = True
+        intents.message_content = True  # needed to read attachments in on_message
 
         shard_count: int | None = None
         sc_env = os.getenv("SHARD_COUNT", "").strip()
