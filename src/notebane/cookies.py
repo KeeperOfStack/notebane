@@ -25,18 +25,44 @@ def ensure_cookies_dir() -> None:
 
 
 def get_guild_cookiefile(guild_id: int) -> str | None:
-    """Return the path to the guild's cookie file, or None if not set."""
-    path = _guild_path(guild_id)
-    return path if os.path.isfile(path) else None
+    """Return the path to a fresh copy of the guild's cookie file, or None if not set.
+
+    yt-dlp overwrites the cookiefile it is given, so we always restore from
+    the immutable ``.orig.txt`` before handing the path to yt-dlp.  This
+    ensures yt-dlp always receives the full original browser-exported cookies
+    rather than a minimal file it previously wrote back.
+    """
+    orig_path = _guild_orig_path(guild_id)
+    if not os.path.isfile(orig_path):
+        return None
+    import shutil
+    work_path = _guild_path(guild_id)
+    shutil.copy2(orig_path, work_path)
+    return work_path
+
+
+def _guild_orig_path(guild_id: int) -> str:
+    """Path for the immutable original upload (never touched by yt-dlp)."""
+    return os.path.join(COOKIES_DIR, f"{guild_id}.orig.txt")
 
 
 def save_guild_cookies(guild_id: int, content: str) -> None:
-    """Write cookies.txt content to disk for a guild."""
+    """Write cookies.txt content to disk for a guild.
+
+    We store the original upload as ``{guild_id}.orig.txt`` (the source of
+    truth) and also copy it to ``{guild_id}.txt`` for an initial working copy.
+    yt-dlp may overwrite the .txt file; the .orig.txt is never passed to
+    yt-dlp so it stays intact.
+    """
     ensure_cookies_dir()
-    path = _guild_path(guild_id)
-    with open(path, "w", encoding="utf-8") as f:
+    orig_path = _guild_orig_path(guild_id)
+    work_path = _guild_path(guild_id)
+    with open(orig_path, "w", encoding="utf-8") as f:
         f.write(content)
-    log.info("Saved cookies for guild %d → %s", guild_id, path)
+    # Keep working copy in sync with the original on every upload
+    import shutil
+    shutil.copy2(orig_path, work_path)
+    log.info("Saved cookies for guild %d → %s", guild_id, orig_path)
 
 
 def delete_guild_cookies(guild_id: int) -> bool:
