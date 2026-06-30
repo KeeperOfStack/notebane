@@ -43,6 +43,9 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 | Command | Arguments | Description |
 |---|---|---|
+| `/ytlogin` | `[browser]` | Link a YouTube account to this server for full playlist access and age-restricted content. Choose your browser (Chrome, Firefox, Edge, Brave, Safari) to get step-by-step export instructions, then upload the `cookies.txt` file as an attachment. Server-wide — all users benefit. |
+| `/ytlogout` | — | Remove the linked YouTube account from this server, reverting to default unauthenticated access. |
+| `/ytstatus` | — | Check whether a YouTube account is currently linked to this server. |
 | `/ping` | — | Check the bot's latency to Discord's gateway. |
 | `/status` | — | Show bot stats — number of guilds, active shards, latency, and active voice players. |
 | `/help` | — | Show a quick reference of all commands grouped by category. |
