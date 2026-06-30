@@ -116,16 +116,20 @@ class Notebane(commands.AutoShardedBot):
         )
 
     async def setup_hook(self) -> None:
+        from notebane.cookies import ensure_cookies_dir
         from notebane.metrics import start_metrics_server
         from notebane.player import GuildPlayerManager
         from notebane.ytdl_updater import start_ytdlp_updater
 
         self.players: GuildPlayerManager = GuildPlayerManager()
 
+        ensure_cookies_dir()
+
         await self.load_extension("notebane.cogs.core")
         await self.load_extension("notebane.cogs.voice")
         await self.load_extension("notebane.cogs.music")
         await self.load_extension("notebane.cogs.search")
+        await self.load_extension("notebane.cogs.auth")
 
         synced = await self.tree.sync()
         log.info("Synced %d slash commands", len(synced))

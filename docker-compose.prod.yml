@@ -16,6 +16,8 @@ services:
       - .env
     environment:
       LOG_FORMAT: json         # structured JSON logs for aggregators
+    volumes:
+      - ./cookies:/cookies     # per-guild YouTube cookies from /ytlogin
     # Uncomment to expose Prometheus /metrics + /health (set METRICS_PORT in .env)
     # ports:
     #   - "9090:9090"

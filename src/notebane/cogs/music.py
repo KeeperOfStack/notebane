@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
+from notebane.cookies import get_guild_cookiefile
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve, resolve_playlist
@@ -239,6 +240,7 @@ class MusicCog(commands.Cog, name="Music"):
         requester: str,
         *,
         insert_next: bool = False,
+        cookiefile: str | None = None,
     ) -> None:
         """Resolve and enqueue all playlist entries concurrently in the background.
 
@@ -254,7 +256,7 @@ class MusicCog(commands.Cog, name="Music"):
                 failed += 1
                 continue
             try:
-                track = await resolve(webpage_url, requester=requester)
+                track = await resolve(webpage_url, requester=requester, cookiefile=cookiefile)
                 if insert_next:
                     resolved.append(track)
                 else:
@@ -288,10 +290,12 @@ class MusicCog(commands.Cog, name="Music"):
         if player is None:
             return
 
+        cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
         try:
-            entries = await resolve_playlist(query)
+            entries = await resolve_playlist(query, cookiefile=cookiefile)
         except YTDLError as exc:
             from notebane.metrics import record_ytdl_error
             record_ytdl_error()
@@ -312,6 +316,7 @@ class MusicCog(commands.Cog, name="Music"):
                 self._enqueue_playlist_bg(
                     interaction, player, entries, playlist_title,
                     requester=interaction.user.display_name,
+                    cookiefile=cookiefile,
                 )
             )
         else:
@@ -319,7 +324,7 @@ class MusicCog(commands.Cog, name="Music"):
             entry = entries[0] if entries else None
             url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
             try:
-                track = await resolve(url, requester=interaction.user.display_name)
+                track = await resolve(url, requester=interaction.user.display_name, cookiefile=cookiefile)
             except YTDLError as exc:
                 from notebane.metrics import record_ytdl_error
                 record_ytdl_error()
@@ -355,10 +360,12 @@ class MusicCog(commands.Cog, name="Music"):
         if player is None:
             return
 
+        cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
         try:
-            entries = await resolve_playlist(query)
+            entries = await resolve_playlist(query, cookiefile=cookiefile)
         except YTDLError as exc:
             from notebane.metrics import record_ytdl_error
             record_ytdl_error()
@@ -382,6 +389,7 @@ class MusicCog(commands.Cog, name="Music"):
                     interaction, player, entries, playlist_title,
                     requester=interaction.user.display_name,
                     insert_next=True,
+                    cookiefile=cookiefile,
                 )
             )
         else:
@@ -389,7 +397,7 @@ class MusicCog(commands.Cog, name="Music"):
             entry = entries[0] if entries else None
             url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
             try:
-                track = await resolve(url, requester=interaction.user.display_name)
+                track = await resolve(url, requester=interaction.user.display_name, cookiefile=cookiefile)
             except YTDLError as exc:
                 from notebane.metrics import record_ytdl_error
                 record_ytdl_error()
