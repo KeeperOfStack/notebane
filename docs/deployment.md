@@ -1,6 +1,6 @@
 # 🚀 Notebane — Deployment Guide
 
-Two supported methods: **Docker Compose** (recommended) and **Portainer Stack**.
+Three deployment methods, ordered from simplest to most configurable.
 
 ---
 
@@ -14,7 +14,89 @@ Before deploying you need:
 
 ---
 
-## Method 1: Docker Compose
+## Method 1: One-Shot Docker Run
+
+No config files, no cloning. Paste this with your tokens filled in and you're running:
+
+```bash
+docker run -d \
+  --name notebane \
+  --restart unless-stopped \
+  -e DISCORD_TOKEN=your_token_here \
+  -e APPLICATION_ID=your_application_id_here \
+  -e LOG_FORMAT=json \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  ghcr.io/keeperofstack/notebane:latest
+```
+
+### Verify it's running
+
+```bash
+docker logs notebane --tail=20
+```
+
+You should see:
+```
+{"level": "INFO", "msg": "Synced 18 slash commands"}
+```
+
+### Updating
+
+```bash
+docker stop notebane && docker rm notebane
+docker pull ghcr.io/keeperofstack/notebane:latest
+# Re-run the docker run command above
+```
+
+---
+
+## Method 2: Portainer Stack
+
+### 1. Open Portainer → **Stacks** → **Add Stack**
+
+### 2. Name it `notebane`
+
+### 3. Paste the following into the Web Editor:
+
+```yaml
+services:
+  notebane:
+    image: ghcr.io/keeperofstack/notebane:latest
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: your_token_here
+      APPLICATION_ID: your_application_id_here
+      LOG_FORMAT: json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+```
+
+### 4. Click **Deploy the stack**
+
+### Updating in Portainer
+
+1. Go to your stack → **Editor**
+2. Click **Pull and redeploy**
+
+---
+
+## Method 3: Docker Compose
+
+Best for self-hosters who want full control and an `.env` file for secrets.
 
 ### 1. Clone the repo
 
@@ -32,7 +114,7 @@ cp .env.example .env
 Edit `.env` and fill in your values:
 
 ```env
-DISCORD_TOKEN=your_bot_token_here
+DISCORD_TOKEN=your_token_here
 APPLICATION_ID=your_application_id_here
 
 # Optional
@@ -59,11 +141,6 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml logs --tail=30
 ```
 
-You should see:
-```
-{"level": "INFO", "msg": "Synced 17 slash commands"}
-```
-
 ### Updating to a newer version
 
 ```bash
@@ -71,56 +148,6 @@ docker compose -f docker-compose.prod.yml down
 docker pull ghcr.io/keeperofstack/notebane:latest
 docker compose -f docker-compose.prod.yml up -d
 ```
-
----
-
-## Method 2: Portainer Stack
-
-### 1. Open Portainer → **Stacks** → **Add Stack**
-
-### 2. Name it `notebane`
-
-### 3. Paste the following into the Web Editor:
-
-```yaml
-services:
-  notebane:
-    image: ghcr.io/keeperofstack/notebane:latest
-    restart: unless-stopped
-    env_file:
-      - stack.env
-    environment:
-      LOG_FORMAT: json
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "5"
-    stop_grace_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-```
-
-### 4. Scroll down to **Environment variables** and add:
-
-| Key | Value |
-|---|---|
-| `DISCORD_TOKEN` | your bot token |
-| `APPLICATION_ID` | your application ID |
-| `LOG_FORMAT` | `json` |
-
-### 5. Click **Deploy the stack**
-
-### Updating in Portainer
-
-1. Go to your stack → **Editor**
-2. Click **Pull and redeploy**
 
 ---
 
