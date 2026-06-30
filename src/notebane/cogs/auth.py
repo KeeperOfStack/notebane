@@ -24,34 +24,38 @@ log = logging.getLogger("notebane.auth")
 _BROWSER_INSTRUCTIONS = {
     "chrome": (
         "**Google Chrome**\n"
-        "1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) from the Chrome Web Store\n"
-        "2. Go to **youtube.com** and sign in\n"
-        "3. Click the extension icon → **Export** → save as `cookies.txt`"
+        "1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) from the Chrome Web Store (enable it in incognito: `chrome://extensions` → details → *Allow in incognito*)\n"
+        "2. Open a **new Incognito window** (Ctrl/Cmd+Shift+N), go to **youtube.com**, sign in\n"
+        "3. Click the extension icon → **Export** → save as `cookies.txt`\n"
+        "4. **Close the Incognito window WITHOUT logging out** of YouTube"
     ),
     "firefox": (
         "**Mozilla Firefox**\n"
-        "1. Install [cookies.txt](https://addons.mozilla.org/firefox/addon/cookies-txt/) from Firefox Add-ons\n"
-        "2. Go to **youtube.com** and sign in\n"
-        "3. Click the extension icon → **Current Site** → save as `cookies.txt`"
+        "1. Install [cookies.txt](https://addons.mozilla.org/firefox/addon/cookies-txt/) from Firefox Add-ons (in extension settings, enable *Run in Private Windows*)\n"
+        "2. Open a **new Private Window** (Ctrl/Cmd+Shift+P), go to **youtube.com**, sign in\n"
+        "3. Click the extension icon → **Current Site** → save as `cookies.txt`\n"
+        "4. **Close the Private Window WITHOUT logging out** of YouTube"
     ),
     "edge": (
         "**Microsoft Edge**\n"
-        "1. Install [Get cookies.txt LOCALLY](https://microsoftedge.microsoft.com/addons/detail/get-cookiestxt-locally/helleheikkohajgapgfgebkpcmagfmna) from the Edge Add-ons store\n"
-        "2. Go to **youtube.com** and sign in\n"
-        "3. Click the extension icon → **Export** → save as `cookies.txt`"
+        "1. Install [Get cookies.txt LOCALLY](https://microsoftedge.microsoft.com/addons/detail/get-cookiestxt-locally/helleheikkohajgapgfgebkpcmagfmna) from the Edge Add-ons store (enable it in InPrivate: `edge://extensions` → details → *Allow in InPrivate*)\n"
+        "2. Open a **new InPrivate window** (Ctrl/Cmd+Shift+N), go to **youtube.com**, sign in\n"
+        "3. Click the extension icon → **Export** → save as `cookies.txt`\n"
+        "4. **Close the InPrivate window WITHOUT logging out** of YouTube"
     ),
     "brave": (
         "**Brave Browser**\n"
-        "1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) from the Chrome Web Store (works in Brave)\n"
-        "2. Go to **youtube.com** and sign in\n"
-        "3. Click the extension icon → **Export** → save as `cookies.txt`"
+        "1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (enable it in private: `brave://extensions` → details → *Allow in private*)\n"
+        "2. Open a **new Private window** (Ctrl/Cmd+Shift+N), go to **youtube.com**, sign in\n"
+        "3. Click the extension icon → **Export** → save as `cookies.txt`\n"
+        "4. **Close the Private window WITHOUT logging out** of YouTube"
     ),
     "safari": (
         "**Safari** (Mac only)\n"
-        "1. Install [Cookie-Editor](https://apps.apple.com/app/cookie-editor/id1672011808) from the Mac App Store "
-        "(general-purpose cookie manager — works fine for this)\n"
-        "2. Go to **youtube.com** and sign in\n"
-        "3. Open Cookie-Editor → click **Export** → choose **Netscape** format → save as `cookies.txt`\n\n"
+        "1. Install [Cookie-Editor](https://apps.apple.com/app/cookie-editor/id1672011808) from the Mac App Store\n"
+        "2. Open a **new Private window** (Cmd+Shift+N), go to **youtube.com**, sign in\n"
+        "3. Open Cookie-Editor → click **Export** → choose **Netscape** format → save as `cookies.txt`\n"
+        "4. **Close the Private window WITHOUT logging out** of YouTube\n\n"
         "ℹ️ `--cookies-from-browser safari` won't work here because the bot runs on a remote server "
         "with no access to your local Mac."
     ),
@@ -70,6 +74,14 @@ def _instructions_embed(browser: str) -> discord.Embed:
     instructions = _BROWSER_INSTRUCTIONS.get(browser, _BROWSER_INSTRUCTIONS["chrome"])
     embed = discord.Embed(
         title="🔐 YouTube Login — Export Your Cookies",
+        description=(
+            "⚠️ **You MUST use a private / incognito window.** "
+            "YouTube rotates session cookies on regular browsing windows within minutes, "
+            "which invalidates any cookies you export. Private windows isolate the session "
+            "so exported cookies stay valid.\n\n"
+            "**Then — critically — close the private window WITHOUT logging out.** "
+            "Logging out invalidates the cookies immediately. Just close the window."
+        ),
         colour=discord.Colour.blurple(),
     )
     embed.add_field(name=f"Step-by-step for {browser.title()}", value=instructions, inline=False)

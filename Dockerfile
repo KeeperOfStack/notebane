@@ -10,7 +10,9 @@ WORKDIR /build
 RUN apk add --no-cache gcc musl-dev libffi-dev
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# --pre allows yt-dlp nightly (needed for clearer "cookies invalid" error messages
+# that the 2026.6.9 stable release buries under "Sign in to confirm your age")
+RUN pip install --no-cache-dir --pre --prefix=/install -r requirements.txt
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime — minimal Alpine + FFmpeg only

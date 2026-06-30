@@ -55,6 +55,16 @@ _AGE_RESTRICTION_HINTS = (
     "inappropriate for some users",
 )
 
+# Phrases that indicate the cookies were invalidated by YouTube (rotated)
+_INVALID_COOKIES_HINTS = (
+    "cookies are no longer valid",
+    "cookies have likely been rotated",
+)
+
+
+def _is_invalid_cookies_error(exc: Exception) -> bool:
+    return any(hint in str(exc).lower() for hint in _INVALID_COOKIES_HINTS)
+
 
 def _is_age_restricted_error(exc: Exception) -> bool:
     return any(hint in str(exc).lower() for hint in _AGE_RESTRICTION_HINTS)
@@ -87,10 +97,16 @@ def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
                     try:
                         info = ydl_auth.extract_info(query, download=False)
                     except Exception as exc2:
+                        if _is_invalid_cookies_error(exc2):
+                            raise YTDLError(
+                                "Your YouTube cookies have been **rotated by YouTube** and are no longer valid. "
+                                "Re-export them using a **private/incognito window** and **close the window without logging out** — "
+                                "then re-upload via `/ytlogin`. See the `/ytlogin` instructions for details."
+                            ) from exc2
                         if _is_age_restricted_error(exc2):
                             raise YTDLError(
-                                "Age-restricted content — your cookies may have expired. "
-                                "Run `/ytlogin` to upload fresh cookies from your browser."
+                                "Age-restricted content — your cookies may have expired or been rotated. "
+                                "Re-export from a **private/incognito window** (without logging out afterward) and run `/ytlogin` again."
                             ) from exc2
                         raise YTDLError(str(exc2)) from exc2
             elif _is_age_restricted_error(exc):
