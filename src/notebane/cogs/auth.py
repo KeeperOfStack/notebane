@@ -166,11 +166,9 @@ class AuthCog(commands.Cog, name="Auth"):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """Validate and save any cookies.txt attached in a guild channel.
-
-        No pending-state tracking needed — the validator is strict enough that
-        a random .txt file won't pass. Any user in the guild can upload.
-        """
+        """Validate and save any cookies.txt attached in a guild channel."""
+        log.info("on_message: author=%s bot=%s guild=%s attachments=%d",
+                 message.author, message.author.bot, message.guild, len(message.attachments))
         if message.author.bot:
             return
         if not message.guild:
@@ -178,8 +176,8 @@ class AuthCog(commands.Cog, name="Auth"):
         if not message.attachments:
             return
 
-        # Find a .txt attachment
         txt_attachments = [a for a in message.attachments if a.filename.endswith(".txt")]
+        log.info("on_message: txt attachments=%s", [a.filename for a in txt_attachments])
         if not txt_attachments:
             return
 
