@@ -132,12 +132,22 @@ class Notebane(commands.AutoShardedBot):
         await self.load_extension("notebane.cogs.auth")
 
         synced = await self.tree.sync()
-        log.info("Synced %d slash commands", len(synced))
+        log.info("Synced %d slash commands globally", len(synced))
 
         await start_metrics_server(self, self.players)
         self._ytdlp_updater_task = await start_ytdlp_updater()
 
     async def on_ready(self) -> None:
+        # Guild-scope sync so commands appear instantly on every server
+        # (global commands can take up to 1 hour to propagate)
+        for guild in self.guilds:
+            try:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                log.debug("Guild-synced commands to %s (%d)", guild.name, guild.id)
+            except Exception as exc:
+                log.warning("Failed to guild-sync to %s (%d): %s", guild.name, guild.id, exc)
+
         log.info(
             "Notebane ready | user=%s | guilds=%d | shards=%d",
             self.user,
