@@ -144,7 +144,7 @@ class Notebane(commands.AutoShardedBot):
             try:
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
-                log.debug("Guild-synced commands to %s (%d)", guild.name, guild.id)
+                log.info("Guild-synced commands to %s (%d)", guild.name, guild.id)
             except Exception as exc:
                 log.warning("Failed to guild-sync to %s (%d): %s", guild.name, guild.id, exc)
 
