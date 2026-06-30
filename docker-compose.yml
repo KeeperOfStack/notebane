@@ -8,6 +8,8 @@ services:
     # Uncomment to expose Prometheus /metrics endpoint (set METRICS_PORT in .env too)
     # ports:
     #   - "9090:9090"
+    volumes:
+      - ./cookies:/cookies
     logging:
       driver: "json-file"
       options:

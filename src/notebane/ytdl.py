@@ -84,7 +84,19 @@ def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
                 opts_auth = dict(opts)
                 opts_auth["cookiefile"] = cookiefile
                 with yt_dlp.YoutubeDL(opts_auth) as ydl_auth:  # type: ignore[arg-type]
-                    info = ydl_auth.extract_info(query, download=False)
+                    try:
+                        info = ydl_auth.extract_info(query, download=False)
+                    except Exception as exc2:
+                        if _is_age_restricted_error(exc2):
+                            raise YTDLError(
+                                "Age-restricted content — your cookies may have expired. "
+                                "Run `/ytlogin` to upload fresh cookies from your browser."
+                            ) from exc2
+                        raise YTDLError(str(exc2)) from exc2
+            elif _is_age_restricted_error(exc):
+                raise YTDLError(
+                    "Age-restricted content — upload cookies via `/ytlogin` to access this video."
+                ) from exc
             else:
                 raise YTDLError(str(exc)) from exc
 
