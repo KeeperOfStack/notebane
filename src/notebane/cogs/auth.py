@@ -76,8 +76,7 @@ def _instructions_embed(browser: str) -> discord.Embed:
     embed.add_field(
         name="Step 4 — Upload here",
         value=(
-            "Once you have `cookies.txt`, **reply to this message** (or send a new message in this channel) "
-            "with the file **attached**.\n\n"
+            "Once you have `cookies.txt`, **send a message in this channel** with the file **attached**.\n\n"
             "The bot will validate and save it automatically."
         ),
         inline=False,
@@ -98,8 +97,6 @@ class AuthCog(commands.Cog, name="Auth"):
 
     def __init__(self, bot: commands.AutoShardedBot) -> None:
         self.bot = bot
-        # Track which guilds are in the middle of a /ytlogin flow (waiting for attachment)
-        self._pending: set[tuple[int, int]] = set()  # (guild_id, user_id)
 
     # ── /ytlogin ─────────────────────────────────────────────────────────────
 
@@ -110,9 +107,6 @@ class AuthCog(commands.Cog, name="Auth"):
         if not interaction.guild:
             await interaction.response.send_message("❌ Server-only command.", ephemeral=True)
             return
-
-        key = (interaction.guild.id, interaction.user.id)
-        self._pending.add(key)
 
         embed = _instructions_embed(browser)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -172,7 +166,11 @@ class AuthCog(commands.Cog, name="Auth"):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """Watch for cookies.txt attachments from users who ran /ytlogin."""
+        """Validate and save any cookies.txt attached in a guild channel.
+
+        No pending-state tracking needed — the validator is strict enough that
+        a random .txt file won't pass. Any user in the guild can upload.
+        """
         if message.author.bot:
             return
         if not message.guild:
@@ -180,20 +178,15 @@ class AuthCog(commands.Cog, name="Auth"):
         if not message.attachments:
             return
 
-        key = (message.guild.id, message.author.id)
-        if key not in self._pending:
-            return
-
         # Find a .txt attachment
         txt_attachments = [a for a in message.attachments if a.filename.endswith(".txt")]
         if not txt_attachments:
-            return  # not our file yet — keep waiting
+            return
 
         attachment = txt_attachments[0]
 
         # Size guard — a real cookies.txt is rarely over 500KB
         if attachment.size > 512_000:
-            self._pending.discard(key)
             await message.reply(
                 "❌ That file is too large to be a valid cookies.txt (max 500KB).",
                 mention_author=False,
@@ -205,20 +198,19 @@ class AuthCog(commands.Cog, name="Auth"):
             content = raw.decode("utf-8")
         except Exception as exc:
             log.warning("Failed to read cookie attachment: %s", exc)
-            self._pending.discard(key)
-            await message.reply("❌ Could not read that file. Make sure it's a text file.", mention_author=False)
             return
 
-        # Validate
+        # Validate — if it's not a real YouTube cookies.txt, stay silent
         ok, reason = validate_youtube_cookies(content)
         if not ok:
-            self._pending.discard(key)
-            await message.reply(f"❌ Invalid cookies file: {reason}", mention_author=False)
+            # Only reply if it looks like an intentional attempt (has "Netscape" header)
+            if "netscape" in content.lower():
+                await message.reply(f"❌ Invalid cookies file: {reason}", mention_author=False)
             return
 
         # Save
         save_guild_cookies(message.guild.id, content)
-        self._pending.discard(key)
+        log.info("Cookies saved for guild %d by user %d", message.guild.id, message.author.id)
 
         embed = discord.Embed(
             title="✅ YouTube Account Linked",
