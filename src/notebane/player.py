@@ -190,6 +190,22 @@ class GuildPlayer:
         """Snapshot of the queue as a list (index 0 = next up)."""
         return list(self.queue._queue)  # type: ignore[attr-defined]
 
+    def insert_next(self, tracks: list[Track]) -> None:
+        """Insert one or more tracks immediately after the current song.
+
+        Prepends `tracks` (in order) to the front of the queue, pushing
+        everything else back. Used by /playnext.
+        """
+        current_queue = self.queue_list()
+        # Rebuild: new tracks first, then whatever was already queued
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for t in tracks + current_queue:
+            self.queue.put_nowait(t)
+
     async def stop(self) -> None:
         """Stop playback and clear the queue."""
         self.loop_track = False

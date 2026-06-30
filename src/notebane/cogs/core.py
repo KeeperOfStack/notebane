@@ -52,7 +52,8 @@ class CoreCog(commands.Cog, name="Core"):
         embed.add_field(
             name="▶ Playback",
             value=(
-                "`/play <query>` — Play a URL or search YouTube; auto-joins your VC\n"
+                "`/play <query>` — Play a URL, playlist, or search YouTube; auto-joins your VC\n"
+                "`/playnext <query>` — Insert a song or playlist after the current track\n"
                 "`/search <query>` — Search and pick from top 5 results\n"
                 "`/skip` — Skip the current track\n"
                 "`/stop` — Stop playback and clear the queue\n"

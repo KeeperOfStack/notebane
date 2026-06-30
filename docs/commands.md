@@ -18,7 +18,8 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 | Command | Arguments | Description |
 |---|---|---|
-| `/play` | `query` | Play a song or add it to the queue. Accepts YouTube URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC if not already connected. |
+| `/play` | `query` | Play a song or playlist, or add to the queue. Accepts YouTube URLs, playlist URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC. For playlists, tracks are added in order — playback starts immediately while the rest load in the background. |
+| `/playnext` | `query` | Insert a song or playlist to play immediately after the current track. For playlists, the full playlist is inserted in order before whatever was next in the queue. |
 | `/skip` | — | Skip the current track and advance to the next one in the queue. |
 | `/stop` | — | Stop playback and clear the entire queue. Bot stays in the channel. |
 | `/pause` | — | Pause the current track. |

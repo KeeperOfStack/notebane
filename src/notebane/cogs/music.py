@@ -14,7 +14,7 @@ from discord.ext import commands
 from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
-from notebane.ytdl import YTDLError, resolve
+from notebane.ytdl import YTDLError, resolve, resolve_playlist
 
 log = logging.getLogger("notebane.music")
 
@@ -50,6 +50,20 @@ def _queued_embed(track: Track, position: int) -> discord.Embed:
     embed.add_field(name="Requested by", value=track.requester, inline=True)
     if track.thumbnail:
         embed.set_thumbnail(url=track.thumbnail)
+    return embed
+
+
+def _playlist_queued_embed(title: str, count: int, requester: str, *, next_up: bool = False) -> discord.Embed:
+    action = "▶ Up Next" if next_up else "➕ Playlist Added"
+    embed = discord.Embed(
+        title=action,
+        description=f"**{title}**",
+        colour=discord.Colour.blurple(),
+    )
+    embed.add_field(name="Tracks", value=str(count), inline=True)
+    embed.add_field(name="Requested by", value=requester, inline=True)
+    if next_up:
+        embed.set_footer(text="Playlist inserted after the current track")
     return embed
 
 
@@ -136,29 +150,27 @@ class MusicCog(commands.Cog, name="Music"):
             text_channel.send(embed=_now_playing_embed(track))
         )
 
-    # ── /play ─────────────────────────────────────────────────────────────────
+    # ── Shared: ensure player is ready ────────────────────────────────────────
 
-    @app_commands.command(name="play", description="Play a song or add it to the queue.")
-    @app_commands.describe(query="YouTube URL, other URL, or search terms")
-    async def play(self, interaction: discord.Interaction, query: str) -> None:
-        await interaction.response.defer()
-
+    async def _ensure_player(
+        self, interaction: discord.Interaction
+    ) -> GuildPlayer | None:
+        """Assert user is in VC, auto-join if needed, return ready player."""
         if not interaction.guild or not interaction.guild_id:
             await interaction.followup.send("❌ This command only works in a server.")
-            return
+            return None
 
         channel = await assert_user_in_voice(interaction)
         if channel is None:
-            return
+            return None
 
-        # Auto-join if not in this channel
         player = self.players.get(interaction.guild_id, channel.id)
         if player is None:
             player = await _connect_to_channel(
                 interaction, channel, self.players, on_track_start=self._on_track_start
             )
             if player is None:
-                return
+                return None
             await player.start()
         elif player._play_task is None or player._play_task.done():
             player._on_track_start = self._on_track_start
@@ -167,32 +179,198 @@ class MusicCog(commands.Cog, name="Music"):
         if isinstance(interaction.channel, discord.TextChannel):
             self._text_channels[channel.id] = interaction.channel
 
-        await interaction.followup.send(f"🔍 Searching for `{query}`…")
+        return player
+
+    # ── Shared: enqueue a playlist in background ───────────────────────────────
+
+    async def _enqueue_playlist_bg(
+        self,
+        interaction: discord.Interaction,
+        player: GuildPlayer,
+        entries: list[dict],
+        playlist_title: str,
+        requester: str,
+        *,
+        insert_next: bool = False,
+    ) -> None:
+        """Resolve and enqueue all playlist entries concurrently in the background.
+
+        Each entry is resolved individually (full stream URL) then either
+        appended to the queue or collected for insert_next().
+        """
+        resolved: list[Track] = []
+        failed = 0
+
+        for entry in entries:
+            webpage_url = entry.get("webpage_url") or entry.get("url") or ""
+            if not webpage_url:
+                failed += 1
+                continue
+            try:
+                track = await resolve(webpage_url, requester=requester)
+                if insert_next:
+                    resolved.append(track)
+                else:
+                    await player.queue.put(track)
+            except YTDLError:
+                failed += 1
+            except Exception:
+                log.exception("Unexpected error resolving playlist entry %r", webpage_url)
+                failed += 1
+
+        if insert_next and resolved:
+            player.insert_next(resolved)
+
+        # Send a completion summary to the text channel
+        ch = self._text_channels.get(player.channel_id)
+        if ch:
+            success_count = len(entries) - failed
+            summary = f"✅ **{playlist_title}** — {success_count} track(s) loaded"
+            if failed:
+                summary += f" ({failed} failed)"
+            await ch.send(summary)
+
+    # ── /play ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="play", description="Play a song or playlist, or add to the queue.")
+    @app_commands.describe(query="YouTube URL, playlist URL, other URL, or search terms")
+    async def play(self, interaction: discord.Interaction, query: str) -> None:
+        await interaction.response.defer()
+
+        player = await self._ensure_player(interaction)
+        if player is None:
+            return
+
+        await interaction.followup.send(f"🔍 Loading `{query}`…")
+
         try:
-            track = await resolve(query, requester=interaction.user.display_name)
+            entries = await resolve_playlist(query)
         except YTDLError as exc:
             from notebane.metrics import record_ytdl_error
             record_ytdl_error()
             await interaction.edit_original_response(
                 content=None,
-                embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                embed=err_embed(f"Could not load: `{query}`\n> {exc}", title="Not Found"),
             )
             return
-        except Exception as exc:
-            log.exception("Unexpected resolve error for %r", query)
+
+        if len(entries) > 1:
+            # Playlist — acknowledge immediately, resolve in background
+            playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or query
             await interaction.edit_original_response(
                 content=None,
-                embed=err_embed(str(exc), title="Unexpected Error"),
+                embed=_playlist_queued_embed(playlist_title, len(entries), interaction.user.display_name),
+            )
+            asyncio.get_event_loop().create_task(
+                self._enqueue_playlist_bg(
+                    interaction, player, entries, playlist_title,
+                    requester=interaction.user.display_name,
+                )
+            )
+        else:
+            # Single track — resolve fully before responding
+            entry = entries[0] if entries else None
+            url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
+            try:
+                track = await resolve(url, requester=interaction.user.display_name)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            await player.queue.put(track)
+            queue_size = player.queue.qsize()
+
+            if player.current is not None:
+                await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
+            else:
+                await interaction.edit_original_response(content="▶️ Starting playback…")
+
+    # ── /playnext ─────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="playnext", description="Insert a song or playlist to play after the current track.")
+    @app_commands.describe(query="YouTube URL, playlist URL, or search terms")
+    async def playnext(self, interaction: discord.Interaction, query: str) -> None:
+        await interaction.response.defer()
+
+        player = await self._ensure_player(interaction)
+        if player is None:
+            return
+
+        await interaction.followup.send(f"🔍 Loading `{query}`…")
+
+        try:
+            entries = await resolve_playlist(query)
+        except YTDLError as exc:
+            from notebane.metrics import record_ytdl_error
+            record_ytdl_error()
+            await interaction.edit_original_response(
+                content=None,
+                embed=err_embed(f"Could not load: `{query}`\n> {exc}", title="Not Found"),
             )
             return
 
-        await player.queue.put(track)
-        queue_size = player.queue.qsize()
-
-        if player.current is not None:
-            await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
+        if len(entries) > 1:
+            # Playlist — acknowledge immediately, resolve + insert in background
+            playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or query
+            await interaction.edit_original_response(
+                content=None,
+                embed=_playlist_queued_embed(
+                    playlist_title, len(entries), interaction.user.display_name, next_up=True
+                ),
+            )
+            asyncio.get_event_loop().create_task(
+                self._enqueue_playlist_bg(
+                    interaction, player, entries, playlist_title,
+                    requester=interaction.user.display_name,
+                    insert_next=True,
+                )
+            )
         else:
-            await interaction.edit_original_response(content="▶️ Starting playback…")
+            # Single track
+            entry = entries[0] if entries else None
+            url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
+            try:
+                track = await resolve(url, requester=interaction.user.display_name)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            player.insert_next([track])
+            embed = discord.Embed(
+                title="▶ Up Next",
+                description=f"**[{track.title}]({track.webpage_url})**",
+                colour=discord.Colour.blurple(),
+            )
+            embed.add_field(name="Duration", value=track.duration_fmt(), inline=True)
+            embed.add_field(name="Requested by", value=track.requester, inline=True)
+            embed.set_footer(text="Inserted after the current track")
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            await interaction.edit_original_response(content=None, embed=embed)
 
     # ── /skip ─────────────────────────────────────────────────────────────────
 
