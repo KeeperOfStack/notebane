@@ -131,8 +131,9 @@ class Notebane(commands.AutoShardedBot):
         await self.load_extension("notebane.cogs.search")
         await self.load_extension("notebane.cogs.auth")
 
-        synced = await self.tree.sync()
-        log.info("Synced %d slash commands globally", len(synced))
+        # No global sync — we push commands guild-by-guild in on_ready and on_guild_join
+        # so they appear instantly without the 1-hour global propagation delay.
+        log.info("All cogs loaded")
 
         await start_metrics_server(self, self.players)
         self._ytdlp_updater_task = await start_ytdlp_updater()
@@ -154,6 +155,15 @@ class Notebane(commands.AutoShardedBot):
             len(self.guilds),
             self.shard_count or 1,
         )
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Push commands immediately when the bot is invited to a new server."""
+        try:
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info("Guild-synced commands to new guild %s (%d)", guild.name, guild.id)
+        except Exception as exc:
+            log.warning("Failed to guild-sync on join to %s (%d): %s", guild.name, guild.id, exc)
 
     async def close(self) -> None:
         """Graceful shutdown — disconnect all voice clients before closing."""
