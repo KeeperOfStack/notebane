@@ -47,14 +47,46 @@ class YTDLError(Exception):
     """Raised when yt-dlp fails to extract info."""
 
 
+# Phrases in yt-dlp error messages that indicate age-restriction
+_AGE_RESTRICTION_HINTS = (
+    "sign in to confirm your age",
+    "age-restricted",
+    "age restricted",
+    "inappropriate for some users",
+)
+
+
+def _is_age_restricted_error(exc: Exception) -> bool:
+    return any(hint in str(exc).lower() for hint in _AGE_RESTRICTION_HINTS)
+
+
+# How many flat entries before we consider a playlist "large" and use cookies
+LARGE_PLAYLIST_THRESHOLD = 200
+
+
 def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
-    """Run yt-dlp synchronously (called in a thread executor)."""
+    """Run yt-dlp synchronously (called in a thread executor).
+
+    Cookie strategy (single tracks):
+      1. Always try without cookies first — looks like a normal browser.
+      2. Only retry with cookies if the error is age-restriction related.
+      Normal videos never touch the cookie file.
+    """
     opts = dict(YTDL_OPTS)
-    if cookiefile:
-        opts["cookiefile"] = cookiefile
 
     with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
-        info = ydl.extract_info(query, download=False)
+        try:
+            info = ydl.extract_info(query, download=False)
+        except Exception as exc:
+            # Age-gated? Retry with cookies if available.
+            if cookiefile and _is_age_restricted_error(exc):
+                log.info("Age-restricted video — retrying with cookies")
+                opts_auth = dict(opts)
+                opts_auth["cookiefile"] = cookiefile
+                with yt_dlp.YoutubeDL(opts_auth) as ydl_auth:  # type: ignore[arg-type]
+                    info = ydl_auth.extract_info(query, download=False)
+            else:
+                raise YTDLError(str(exc)) from exc
 
     if info is None:
         raise YTDLError(f"No results for: {query!r}")
@@ -77,29 +109,47 @@ def _extract_playlist_sync(url: str, cookiefile: str | None = None) -> list[dict
       - 'url' or 'webpage_url': the video page URL (NOT a stream URL)
 
     For single videos, returns a one-item list.
+
+    Cookie strategy (playlists):
+      1. Always fetch without cookies first.
+      2. If entry count >= LARGE_PLAYLIST_THRESHOLD AND cookies are available,
+         re-fetch with cookies to get the full authenticated list.
+      Small/normal playlists never touch the cookie file.
     """
-    opts = dict(YTDL_OPTS)
-    opts["noplaylist"] = False      # allow playlists
-    opts["extract_flat"] = True     # don't resolve individual stream URLs
-    opts["ignoreerrors"] = True     # skip unavailable entries rather than aborting
-    # skip=webpage uses YouTube's internal API endpoint instead of HTML scraping,
-    # which returns significantly more entries for large playlists without auth.
-    opts["extractor_args"] = {"youtubetab": {"skip": ["webpage"]}}
-    if cookiefile:
-        opts["cookiefile"] = cookiefile
+    def _fetch(extra_opts: dict[str, Any]) -> list[dict[str, Any]]:
+        opts = dict(YTDL_OPTS)
+        opts["noplaylist"] = False      # allow playlists
+        opts["extract_flat"] = True     # don't resolve individual stream URLs
+        opts["ignoreerrors"] = True     # skip unavailable entries rather than aborting
+        # skip=webpage uses YouTube's internal API endpoint instead of HTML scraping,
+        # which returns significantly more entries for large playlists without auth.
+        opts["extractor_args"] = {"youtubetab": {"skip": ["webpage"]}}
+        opts.update(extra_opts)
 
-    with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
-        info = ydl.extract_info(url, download=False)
+        with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
+            info = ydl.extract_info(url, download=False)
 
-    if info is None:
-        return []
+        if info is None:
+            return []
+        if info.get("_type") == "playlist":
+            return [e for e in (info.get("entries") or []) if e]  # type: ignore[return-value]
+        return [info]  # type: ignore[return-value]
 
-    if info.get("_type") == "playlist":
-        entries = info.get("entries") or []
-        return [e for e in entries if e]  # type: ignore[return-value]
+    # Step 1 — unauthenticated fetch (always)
+    entries = _fetch({})
 
-    # Single video
-    return [info]  # type: ignore[return-value]
+    # Step 2 — if we hit the unauthenticated ceiling and have cookies, go again
+    if cookiefile and len(entries) >= LARGE_PLAYLIST_THRESHOLD:
+        log.info(
+            "Playlist hit %d entries (≥%d threshold) — re-fetching with cookies",
+            len(entries), LARGE_PLAYLIST_THRESHOLD,
+        )
+        auth_entries = _fetch({"cookiefile": cookiefile})
+        if len(auth_entries) > len(entries):
+            log.info("Authenticated fetch returned %d entries (was %d)", len(auth_entries), len(entries))
+            return auth_entries
+
+    return entries
 
 
 async def resolve_playlist(
