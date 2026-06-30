@@ -48,9 +48,12 @@ _BROWSER_INSTRUCTIONS = {
     ),
     "safari": (
         "**Safari** (Mac only)\n"
-        "1. Install [Cookie-Editor](https://apps.apple.com/app/cookie-editor/id1672011808) from the Mac App Store\n"
+        "1. Install [Cookie-Editor](https://apps.apple.com/app/cookie-editor/id1672011808) from the Mac App Store "
+        "(general-purpose cookie manager — works fine for this)\n"
         "2. Go to **youtube.com** and sign in\n"
-        "3. Open Cookie-Editor → click **Export** → choose **Netscape** format → save as `cookies.txt`"
+        "3. Open Cookie-Editor → click **Export** → choose **Netscape** format → save as `cookies.txt`\n\n"
+        "ℹ️ `--cookies-from-browser safari` won't work here because the bot runs on a remote server "
+        "with no access to your local Mac."
     ),
 }
 
