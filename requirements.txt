@@ -1,6 +1,7 @@
 # Core
 discord.py[voice]==2.7.1
 yt-dlp==2026.6.29.234344.dev0
+yt-dlp-ejs==0.8.0
 PyNaCl==1.5.0
 
 # Metrics (optional — only used if METRICS_PORT is set)
