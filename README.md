@@ -17,6 +17,8 @@
 - 🎵 **Full queue system** — add, skip, shuffle, loop, remove tracks
 - 📋 **Slash commands** — fully Discord application-command native
 - ⚡ **Low latency** — direct stream-to-voice pipeline, no intermediate disk writes
+- 🎛️ **Now Playing controls** — interactive ⏸/⏭/⏹ buttons on every track start message
+- 📃 **Playlist support** — full YouTube playlist loading via yt-dlp internal API (~2× more tracks than unauthenticated HTML scraping)
 
 ---
 

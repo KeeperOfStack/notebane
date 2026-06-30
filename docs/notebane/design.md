@@ -137,7 +137,7 @@ Target: **< 200MB** final image. No gcc, no build tools, no cache in final layer
 - Rate limit backoff on yt-dlp extraction failures
 - Search: `/play <search terms>` → yt-dlp `ytsearch:` → show top 5 choices
 
-### Phase 8 — Production Hardening
+### Phase 8 — Production Hardening ✅
 - Health check endpoint (tiny HTTP server or Docker HEALTHCHECK)
 - Graceful shutdown: drain queues, disconnect VCs
 - Log structured JSON to stdout (for log aggregators)
@@ -145,6 +145,12 @@ Target: **< 200MB** final image. No gcc, no build tools, no cache in final layer
 - `docker-compose.prod.yml` with restart policies, log limits
 - Resource limits in compose (CPU/memory caps)
 - README quick-start verified end-to-end
+
+### Phase 9 — Playlist Hardening & Now Playing Controls ✅
+- `NowPlayingView`: ⏸/⏭/⏹ buttons attached to every Now Playing embed
+- `/queue` deferred to prevent Discord 3-second timeout during heavy playlist loads
+- yt-dlp `youtubetab:skip=webpage` for ~2× playlist coverage without auth
+- `ignoreerrors=True` on playlist fetch so deleted tracks don't abort the queue
 
 ---
 
@@ -174,11 +180,26 @@ Target: **< 200MB** final image. No gcc, no build tools, no cache in final layer
 | Persistent queue (future) | Redis | Phase 8+ if needed — no premature complexity |
 | Commands | Slash commands only | Modern Discord UX; no prefix ambiguity |
 
+### Phase 9 — Playlist Hardening & Now Playing Controls (post-launch) ✅
+
+**Commits:** `b3b91d2`, `79e3de1`
+
+**Shipped:**
+- `cogs/music.py` — `NowPlayingView` (discord.ui.View): ⏸ pause/resume (updates embed), ⏭ skip, ⏹ stop — sent with every `_on_track_start` message
+- `cogs/music.py` — `/queue` now defers first (`interaction.response.defer()` + `followup.send()`) to prevent Discord's 3-second timeout when the event loop is busy processing playlist background tasks
+- `_get_player()` — `deferred=` flag to route errors through `followup.send()` vs `response.send_message()` correctly after a defer
+- `ytdl.py` — `_extract_playlist_sync`: added `extractor_args={"youtubetab": {"skip": ["webpage"]}}` to use YouTube's internal API endpoint instead of HTML scraping; yields ~2× more playlist entries (222 vs 107 for a 311-track playlist). Added `ignoreerrors=True` so deleted/private entries are skipped rather than aborting the fetch
+
+**Verified:**
+- All 107 old-method tracks appear in correct order within the 222-track list
+- Playlist order matches YouTube API ground truth (spot-checked against YouTube Data API v3)
+- `playlist_count` field from yt-dlp confirms 311 total; remaining 89 require authenticated cookies to access (YouTube limitation, not a bot bug)
+
 ---
 
 ## Open Questions
 
-- [ ] Do we want Spotify link support? (requires spotify API → yt-dlp search fallback)
-- [ ] Do we want SoundCloud / Bandcamp? (yt-dlp supports both, just need testing)
-- [ ] Public bot (verified) or self-hosted only? (affects Phase 6 shard limits)
-- [ ] Cookie injection for YouTube age-gating / geo-locked content?
+- [x] ~~Cookie injection for YouTube age-gating / geo-locked content?~~ → `YTDL_COOKIEFILE` env var wired in Phase 6; cookies.txt path is configurable. Without cookies, ~71% of large playlists are accessible via `youtubetab:skip=webpage`
+- [ ] Spotify link support? (spotify API → yt-dlp search fallback)
+- [ ] SoundCloud / Bandcamp — yt-dlp supports both; needs user-facing testing
+- [ ] Public verified bot (affects shard limits) vs self-hosted only — currently self-hosted
