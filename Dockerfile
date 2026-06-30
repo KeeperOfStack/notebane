@@ -21,8 +21,10 @@ LABEL org.opencontainers.image.source="https://github.com/KeeperOfStack/notebane
 LABEL org.opencontainers.image.description="Lightweight Discord music bot powered by yt-dlp"
 LABEL org.opencontainers.image.licenses="MIT"
 
-# FFmpeg for audio pipeline (Opus passthrough)
-RUN apk add --no-cache ffmpeg curl
+# FFmpeg for audio pipeline (Opus passthrough); Deno provides the JS runtime
+# yt-dlp uses to solve YouTube's signature/n-challenge (without it, age-gated
+# and some normal videos return zero playable formats — only image storyboards)
+RUN apk add --no-cache ffmpeg curl deno
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
