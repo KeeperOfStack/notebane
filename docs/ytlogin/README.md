@@ -26,7 +26,7 @@ You **must** use a private/incognito window. YouTube rotates session cookies on 
 
 - **Per-guild cookies** stored at `/cookies/<guild_id>.orig.txt` (immutable source) and `/cookies/<guild_id>.txt` (working copy restored before each yt-dlp call — yt-dlp overwrites whatever cookiefile it's given).
 - **Smart gating:** cookies are NOT sent for normal requests. They fire only on age-restriction retry or playlists ≥200 entries.
-- **JS runtime (Deno) baked into the image** for yt-dlp's signature/n-challenge solver. Required to derive playable audio URLs.
+- **JS runtime (Deno) baked into the image** AND **`yt-dlp-ejs` Python package** — yt-dlp needs both: Deno is the JavaScript runtime, `yt-dlp-ejs` ships the actual challenge-solver script that runs on Deno. Without either one, yt-dlp silently returns only image storyboards for many videos. The misleading "Sign in to confirm your age" error on age-gated content is often this, not an auth problem.
 - **yt-dlp nightly (`2026.6.29+`)** pinned so the explicit "cookies are no longer valid — likely been rotated" error reaches users when their export went stale. Stable releases buried this under a misleading "Sign in to confirm your age" message.
 - **Volume `cookies/` is gitignored.** Never commit real cookies — the directory is in `.gitignore`.
 
@@ -36,7 +36,8 @@ When `/play` on an age-restricted video fails with the auth error message, the a
 
 | Cause | Surface symptom (stable yt-dlp) | Real symptom (nightly yt-dlp) |
 |---|---|---|
-| No JS runtime | "Sign in to confirm your age" | `Signature solving failed: install a JS runtime` |
+| No JS runtime (Deno/Node) | "Sign in to confirm your age" | `Signature solving failed: install a JS runtime` |
+| **Missing `yt-dlp-ejs` package** | "Sign in to confirm your age" | `Remote components challenge solver script were skipped` |
 | Cookies clobbered by yt-dlp | "Sign in to confirm your age" | (varies) |
 | Cookies exported from regular window | "Sign in to confirm your age" | `The provided YouTube account cookies are no longer valid. They have likely been rotated` |
 | Cookies expired (months/years old) | "Sign in to confirm your age" | "Cookies have expired" |
