@@ -81,6 +81,10 @@ def _extract_playlist_sync(url: str, cookiefile: str | None = None) -> list[dict
     opts = dict(YTDL_OPTS)
     opts["noplaylist"] = False      # allow playlists
     opts["extract_flat"] = True     # don't resolve individual stream URLs
+    opts["ignoreerrors"] = True     # skip unavailable entries rather than aborting
+    # skip=webpage uses YouTube's internal API endpoint instead of HTML scraping,
+    # which returns significantly more entries for large playlists without auth.
+    opts["extractor_args"] = {"youtubetab": {"skip": ["webpage"]}}
     if cookiefile:
         opts["cookiefile"] = cookiefile
 
