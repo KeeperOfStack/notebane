@@ -15,7 +15,7 @@ from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
 from notebane.cookies import get_guild_cookiefile
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
-from notebane.ytdl import YTDLError, resolve, resolve_playlist
+from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist
 
 log = logging.getLogger("notebane.music")
 
@@ -294,6 +294,36 @@ class MusicCog(commands.Cog, name="Music"):
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
+        # ── Fast path: single video URL or search term ─────────────────
+        # Skip the flat-extract playlist step entirely — one yt-dlp call
+        # instead of two. See docs/phase11-quickplay/plan.md phase 13.
+        if not looks_like_playlist(query):
+            try:
+                track = await resolve(query, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            await player.queue.put(track)
+            queue_size = player.queue.qsize()
+            if player.current is not None:
+                await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
+            else:
+                await interaction.edit_original_response(content="▶️ Starting playback…")
+            return
+
         try:
             entries = await resolve_playlist(query, cookiefile=cookiefile)
         except YTDLError as exc:
@@ -320,7 +350,7 @@ class MusicCog(commands.Cog, name="Music"):
                 )
             )
         else:
-            # Single track — resolve fully before responding
+            # Playlist URL that resolved to a single entry — resolve fully.
             entry = entries[0] if entries else None
             url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
             try:
@@ -363,6 +393,40 @@ class MusicCog(commands.Cog, name="Music"):
         cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
+
+        # ── Fast path: single video URL or search term ─────────────────
+        if not looks_like_playlist(query):
+            try:
+                track = await resolve(query, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            player.insert_next([track])
+            embed = discord.Embed(
+                title="▶ Up Next",
+                description=f"**[{track.title}]({track.webpage_url})**",
+                colour=discord.Colour.blurple(),
+            )
+            embed.add_field(name="Duration", value=track.duration_fmt(), inline=True)
+            embed.add_field(name="Requested by", value=track.requester, inline=True)
+            embed.set_footer(text="Inserted after the current track")
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            await interaction.edit_original_response(content=None, embed=embed)
+            return
 
         try:
             entries = await resolve_playlist(query, cookiefile=cookiefile)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from functools import partial
 from typing import Any
 
@@ -72,6 +73,40 @@ def _is_age_restricted_error(exc: Exception) -> bool:
 
 # How many flat entries before we consider a playlist "large" and use cookies
 LARGE_PLAYLIST_THRESHOLD = 200
+
+
+# Playlist-URL detection — cheap, no network. Used by /play and /playnext
+# to bypass the flat-extract step for single videos and bare search queries.
+#
+# Matches:
+#   - Any URL with `list=` query param (regular playlists, radios, mixes)
+#   - Any URL with `/playlist?` path (album/artist pages)
+#   - `youtube.com/@handle/playlists`, `/user/.../playlists`
+#
+# Does NOT match:
+#   - Single video URLs (youtu.be/*, watch?v=*)
+#   - Bare search queries (no scheme)
+#   - Music.youtube.com watch URLs without list=
+_PLAYLIST_HINTS = re.compile(
+    r"([?&]list=[A-Za-z0-9_-]+|/playlist\?|/playlists(?:/|$|\?))",
+    re.IGNORECASE,
+)
+
+
+def looks_like_playlist(query: str) -> bool:
+    """Return True if the query is clearly a playlist URL.
+
+    Cheap, no network. Callers use this to skip the flat-extract step
+    for single videos and search terms, cutting one yt-dlp call
+    (~1–2s) off the `/play` critical path.
+
+    Both regular playlists (`list=PL...`) and YouTube-Music album lists
+    (`list=OLAK5uy_...`) route to the playlist path. Radio/Mix lists
+    (`list=RD...`) also route through — technically single-video-seeded
+    but yt-dlp will expand them and that's what the user asked for by
+    pasting the URL.
+    """
+    return bool(_PLAYLIST_HINTS.search(query))
 
 
 def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
