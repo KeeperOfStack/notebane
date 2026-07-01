@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import random
+import time
 
 import discord
 from discord import app_commands
@@ -241,34 +242,86 @@ class MusicCog(commands.Cog, name="Music"):
         *,
         insert_next: bool = False,
         cookiefile: str | None = None,
+        t_bg_start: float | None = None,
     ) -> None:
-        """Resolve and enqueue all playlist entries concurrently in the background.
+        """Resolve and enqueue playlist entries with bounded concurrency.
 
-        Each entry is resolved individually (full stream URL) then either
-        appended to the queue or collected for insert_next().
+        Uses a Semaphore(4) so up to 4 yt-dlp resolves run in parallel
+        (yt-dlp is I/O-bound on YouTube's HTTP responses, so 4 is a
+        good balance against tripping rate limits). Results are re-sorted
+        into original playlist order before enqueue/insert to preserve
+        user intent regardless of resolve completion order.
+
+        For queue (`insert_next=False`), tracks are put on the queue in
+        order as soon as each contiguous prefix from index 0 has resolved
+        — so the first entry can start playing while the rest of the
+        playlist is still resolving. See Phase 14 in plan.md.
         """
-        resolved: list[Track] = []
+        SEM_LIMIT = 4
+        sem = asyncio.Semaphore(SEM_LIMIT)
+        # Result slots: None = pending/failed, Track = resolved
+        results: list[Track | None] = [None] * len(entries)
+        failed_lock = asyncio.Lock()
         failed = 0
+        # For the queue path, we walk a cursor forward as contiguous
+        # results land so playback can start ASAP.
+        cursor = 0
+        cursor_lock = asyncio.Lock()
 
-        for entry in entries:
+        async def _resolve_one(idx: int, entry: dict) -> None:
+            nonlocal failed, cursor
             webpage_url = entry.get("webpage_url") or entry.get("url") or ""
             if not webpage_url:
-                failed += 1
-                continue
-            try:
-                track = await resolve(webpage_url, requester=requester, cookiefile=cookiefile)
-                if insert_next:
-                    resolved.append(track)
-                else:
-                    await player.queue.put(track)
-            except YTDLError:
-                failed += 1
-            except Exception:
-                log.exception("Unexpected error resolving playlist entry %r", webpage_url)
-                failed += 1
+                async with failed_lock:
+                    failed += 1
+                return
+            async with sem:
+                try:
+                    track = await resolve(webpage_url, requester=requester, cookiefile=cookiefile)
+                    results[idx] = track
+                except YTDLError:
+                    async with failed_lock:
+                        failed += 1
+                except Exception:
+                    log.exception("Unexpected error resolving playlist entry %r", webpage_url)
+                    async with failed_lock:
+                        failed += 1
 
-        if insert_next and resolved:
-            player.insert_next(resolved)
+            # Queue path: try to advance the enqueue cursor over any
+            # contiguous resolved prefix now that we've landed.
+            if not insert_next:
+                async with cursor_lock:
+                    while cursor < len(results) and results[cursor] is not None:
+                        track_to_enqueue = results[cursor]
+                        was_first = cursor == 0
+                        cursor += 1
+                        # release cursor lock briefly while we await queue.put
+                        # (queue.put is bounded and can block if full)
+                        await player.queue.put(track_to_enqueue)  # type: ignore[arg-type]
+                        if was_first and t_bg_start is not None:
+                            from notebane.metrics import record_play_latency
+                            record_play_latency("playlist_first", time.perf_counter() - t_bg_start)
+
+        # Kick off every resolver concurrently; the semaphore bounds
+        # how many actually run at once.
+        await asyncio.gather(
+            *(_resolve_one(i, e) for i, e in enumerate(entries)),
+            return_exceptions=False,
+        )
+
+        if insert_next:
+            # Bulk-insert in original order, filtering pending/failed slots.
+            resolved_in_order = [t for t in results if t is not None]
+            if resolved_in_order:
+                player.insert_next(resolved_in_order)
+        else:
+            # Sweep any tail that didn't get flushed by the cursor
+            # (shouldn't happen with the loop above, but defensive).
+            async with cursor_lock:
+                while cursor < len(results):
+                    if results[cursor] is not None:
+                        await player.queue.put(results[cursor])  # type: ignore[arg-type]
+                    cursor += 1
 
         # Send a completion summary to the text channel
         ch = self._text_channels.get(player.channel_id)
@@ -284,6 +337,7 @@ class MusicCog(commands.Cog, name="Music"):
     @app_commands.command(name="play", description="Play a song or playlist, or add to the queue.")
     @app_commands.describe(query="YouTube URL, playlist URL, other URL, or search terms")
     async def play(self, interaction: discord.Interaction, query: str) -> None:
+        t_start = time.perf_counter()
         await interaction.response.defer()
 
         player = await self._ensure_player(interaction)
@@ -318,6 +372,8 @@ class MusicCog(commands.Cog, name="Music"):
 
             await player.queue.put(track)
             queue_size = player.queue.qsize()
+            from notebane.metrics import record_play_latency
+            record_play_latency("single", time.perf_counter() - t_start)
             if player.current is not None:
                 await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
             else:
@@ -347,6 +403,7 @@ class MusicCog(commands.Cog, name="Music"):
                     interaction, player, entries, playlist_title,
                     requester=interaction.user.display_name,
                     cookiefile=cookiefile,
+                    t_bg_start=t_start,
                 )
             )
         else:
@@ -384,6 +441,7 @@ class MusicCog(commands.Cog, name="Music"):
     @app_commands.command(name="playnext", description="Insert a song or playlist to play after the current track.")
     @app_commands.describe(query="YouTube URL, playlist URL, or search terms")
     async def playnext(self, interaction: discord.Interaction, query: str) -> None:
+        t_start = time.perf_counter()
         await interaction.response.defer()
 
         player = await self._ensure_player(interaction)
@@ -415,6 +473,8 @@ class MusicCog(commands.Cog, name="Music"):
                 return
 
             player.insert_next([track])
+            from notebane.metrics import record_play_latency
+            record_play_latency("playnext_single", time.perf_counter() - t_start)
             embed = discord.Embed(
                 title="▶ Up Next",
                 description=f"**[{track.title}]({track.webpage_url})**",
@@ -454,6 +514,7 @@ class MusicCog(commands.Cog, name="Music"):
                     requester=interaction.user.display_name,
                     insert_next=True,
                     cookiefile=cookiefile,
+                    t_bg_start=t_start,
                 )
             )
         else:

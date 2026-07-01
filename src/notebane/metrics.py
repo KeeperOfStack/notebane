@@ -42,6 +42,23 @@ ACTIVE_PLAYERS = Gauge("notebane_active_players_total", "Voice channels currentl
 TRACKS_PLAYED = Counter("notebane_tracks_played_total", "Cumulative tracks played since start")
 LATENCY = Gauge("notebane_latency_seconds", "Discord websocket latency in seconds")
 YTDL_ERRORS = Counter("notebane_ytdl_errors_total", "Cumulative yt-dlp resolution errors")
+PLAY_LATENCY = Gauge(
+    "notebane_play_latency_seconds",
+    "Seconds from /play defer to first queue.put — last observation, labelled by kind",
+    labelnames=("kind",),
+)
+
+
+def record_play_latency(kind: str, seconds: float) -> None:
+    """Record time-to-first-queue-put for a /play or /playnext invocation.
+
+    kind: 'single' (URL or search fast path), 'playlist_first' (first
+    track of a playlist landed on queue), 'playlist_insert_next_first'
+    (first insert_next track). Logged to stdout AND exposed as a Prom
+    gauge so scrapes see the most recent value per kind.
+    """
+    PLAY_LATENCY.labels(kind=kind).set(seconds)
+    log.info("play_latency kind=%s ms=%d", kind, int(seconds * 1000))
 
 
 def record_track_played() -> None:
