@@ -235,10 +235,16 @@ class GuildPlayer:
         """Revert the queue to its state before the last mutation.
 
         Pushes the current queue onto the redo stack.
+        Cancels any still-running background playlist loaders so they
+        cannot re-populate the queue after the undo.
         Returns the restored queue snapshot, or None if nothing to undo.
         """
         if not self._undo_stack:
             return None
+        # Cancel in-flight playlist loaders before replacing the queue.
+        for t in list(self._bg_tasks):
+            t.cancel()
+        self._bg_tasks.clear()
         self._redo_stack.append(self.queue_list())
         prev = self._undo_stack.pop()
         self._replace_queue(prev)
@@ -248,10 +254,15 @@ class GuildPlayer:
         """Re-apply the last undone mutation.
 
         Pushes the current queue onto the undo stack so the redo is itself
-        undoable. Returns the restored queue snapshot, or None if nothing to redo.
+        undoable. Cancels any still-running background playlist loaders.
+        Returns the restored queue snapshot, or None if nothing to redo.
         """
         if not self._redo_stack:
             return None
+        # Cancel in-flight playlist loaders before replacing the queue.
+        for t in list(self._bg_tasks):
+            t.cancel()
+        self._bg_tasks.clear()
         self._undo_stack.append(self.queue_list())
         nxt = self._redo_stack.pop()
         self._replace_queue(nxt)
