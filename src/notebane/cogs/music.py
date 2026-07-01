@@ -45,9 +45,10 @@ def _now_playing_embed(track: Track, *, paused: bool = False) -> discord.Embed:
 class NowPlayingView(discord.ui.View):
     """Persistent control buttons attached to the Now Playing message."""
 
-    def __init__(self, player: "GuildPlayer") -> None:
+    def __init__(self, player: "GuildPlayer", players: "GuildPlayerManager") -> None:
         super().__init__(timeout=None)
         self.player = player
+        self.players = players
 
     @discord.ui.button(emoji="⏸", style=discord.ButtonStyle.secondary, custom_id="np_pause_resume")
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -76,7 +77,10 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(emoji="⏹", style=discord.ButtonStyle.danger, custom_id="np_stop")
     async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        guild_id = self.player.guild_id
+        channel_id = self.player.channel_id
         await self.player.disconnect()
+        self.players.remove(guild_id, channel_id)
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
 
@@ -121,9 +125,10 @@ def _queue_embed(player: GuildPlayer, page: int = 1) -> discord.Embed:
     if player.current:
         t = player.current
         loop_tag = " 🔁" if player.loop_track else ""
+        title_safe = (t.title or "Unknown")[:80]
         embed.add_field(
             name=f"▶ Now Playing{loop_tag}",
-            value=f"[{t.title}]({t.webpage_url}) `{t.duration_fmt()}`\n*Requested by {t.requester}*",
+            value=f"[{title_safe}]({t.webpage_url}) `{t.duration_fmt()}`\n*Requested by {t.requester}*",
             inline=False,
         )
     else:
@@ -137,7 +142,9 @@ def _queue_embed(player: GuildPlayer, page: int = 1) -> discord.Embed:
         end = start + QUEUE_PAGE_SIZE
         lines = []
         for i, t in enumerate(tracks[start:end], start=start + 1):
-            lines.append(f"`{i}.` [{t.title}]({t.webpage_url}) `{t.duration_fmt()}` — *{t.requester}*")
+            # Truncate titles so the embed field never exceeds Discord's 1024-char limit
+            title_safe = (t.title or "Unknown")[:60]
+            lines.append(f"`{i}.` [{title_safe}]({t.webpage_url}) `{t.duration_fmt()}` — *{t.requester}*")
         embed.add_field(name=f"Up Next (page {page}/{total_pages})", value="\n".join(lines), inline=False)
 
     loop_tag = " • 🔁 Queue loop ON" if player.loop_queue else ""
@@ -195,7 +202,7 @@ class MusicCog(commands.Cog, name="Music"):
         text_channel = self._text_channels.get(player.channel_id)
         if text_channel is None:
             return
-        view = NowPlayingView(player)
+        view = NowPlayingView(player, self.players)
         asyncio.get_event_loop().create_task(
             text_channel.send(embed=_now_playing_embed(track), view=view)
         )
@@ -312,6 +319,10 @@ class MusicCog(commands.Cog, name="Music"):
                     was_first = cursor == 0
                     cursor += 1
 
+                    # Guard: if stop() cancelled this task, don't put anything
+                    # on the queue — the queue was already drained.
+                    if asyncio.current_task() and asyncio.current_task().cancelled():  # type: ignore[union-attr]
+                        return
                     if not insert_next:
                         # Queue path: put at end; play loop picks it up immediately.
                         await player.queue.put(track_to_flush)  # type: ignore[arg-type]
@@ -320,15 +331,17 @@ class MusicCog(commands.Cog, name="Music"):
                             record_play_latency("playlist_first", time.perf_counter() - t_bg_start)
                     else:
                         # Insert-next path: maintain order at the front of queue.
+                        # Uses player.insert_at() which respects asyncio.Queue
+                        # internals (wakes blocked get() waiters) — unlike raw
+                        # ._queue.insert() which bypasses them and causes chop/hang.
                         if was_first:
                             # First track: push to immediately after current song.
                             player.insert_next([track_to_flush])  # type: ignore[arg-type]
                         else:
-                            # Subsequent tracks: slot right after the previously
-                            # inserted playlist entry so the playlist stays contiguous
-                            # and ahead of any pre-existing queued songs.
+                            # Subsequent tracks: slot right after previously inserted
+                            # playlist entries, ahead of any pre-existing queue songs.
                             pos = min(pn_insert_pos, player.queue.qsize())
-                            player.queue._queue.insert(pos, track_to_flush)  # type: ignore[attr-defined]
+                            player.insert_at(pos, track_to_flush)  # type: ignore[arg-type]
                         pn_insert_pos += 1
 
         # Kick off every resolver concurrently; the semaphore bounds
@@ -343,12 +356,14 @@ class MusicCog(commands.Cog, name="Music"):
         async with cursor_lock:
             while cursor < len(results):
                 if results[cursor] is not None:
-                    if not insert_next:
-                        await player.queue.put(results[cursor])  # type: ignore[arg-type]
-                    else:
-                        pos = min(pn_insert_pos, player.queue.qsize())
-                        player.queue._queue.insert(pos, results[cursor])  # type: ignore[attr-defined]
-                        pn_insert_pos += 1
+                    # Same cancel guard as above
+                    if not (asyncio.current_task() and asyncio.current_task().cancelled()):  # type: ignore[union-attr]
+                        if not insert_next:
+                            await player.queue.put(results[cursor])  # type: ignore[arg-type]
+                        else:
+                            pos = min(pn_insert_pos, player.queue.qsize())
+                            player.insert_at(pos, results[cursor])  # type: ignore[arg-type]
+                            pn_insert_pos += 1
                 cursor += 1
 
         # Send a completion summary to the text channel
@@ -726,7 +741,17 @@ class MusicCog(commands.Cog, name="Music"):
         player = await _get_player(interaction, self.players, deferred=True)
         if player is None:
             return
-        await interaction.followup.send(embed=_queue_embed(player, page))
+        try:
+            embed = _queue_embed(player, page)
+            await interaction.followup.send(embed=embed)
+        except Exception:
+            log.exception("Failed to build queue embed")
+            total = player.queue.qsize() + (1 if player.current else 0)
+            await interaction.followup.send(
+                f"📋 **Queue** — {total} track{'s' if total != 1 else ''} loaded. "
+                "(Embed failed — try `/queue` again or `/nowplaying` for current track.)",
+                ephemeral=True,
+            )
 
     # ── /remove ───────────────────────────────────────────────────────────────
 

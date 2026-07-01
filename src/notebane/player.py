@@ -268,6 +268,36 @@ class GuildPlayer:
         self._replace_queue(nxt)
         return nxt
 
+    async def wait_for_bg_tasks(self) -> None:
+        """Wait for all in-flight background playlist loaders to complete.
+
+        Used by /createlist so it can snapshot the queue only AFTER every
+        enqueued track has been resolved and added to asyncio.Queue.
+        Safe to call with no running tasks — returns immediately.
+        """
+        if not self._bg_tasks:
+            return
+        # Copy the set — tasks may add/remove themselves while we await
+        pending = list(self._bg_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    def insert_at(self, pos: int, track: Track) -> None:
+        """Insert a single track at queue position `pos` (0 = front).
+
+        Uses put_nowait + deque rotate so asyncio.Queue internals (maxsize,
+        waiters) are respected — unlike raw ._queue.insert() which bypasses
+        all of that and fails to wake a blocked queue.get() waiter.
+        """
+        self.queue.put_nowait(track)
+        # put_nowait appended to the right; rotate to move it to `pos`
+        dq = self.queue._queue  # type: ignore[attr-defined]
+        # The newly-appended item is at dq[-1].  We need to move it to dq[pos].
+        # Rotate right by (len-1 - pos) brings it to position pos from the left.
+        n = len(dq)
+        steps = n - 1 - min(pos, n - 1)
+        dq.rotate(steps)
+
     def insert_next(self, tracks: list[Track]) -> None:
         """Insert one or more tracks immediately after the current song.
 

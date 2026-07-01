@@ -571,6 +571,16 @@ class PlaylistCog(commands.Cog, name="Playlists"):
             await interaction.followup.send("❌ I'm not in a voice channel.", ephemeral=True)
             return
 
+        # If a background playlist loader is still running, wait for it to
+        # finish before snapshotting — otherwise we'd save only the tracks
+        # resolved so far (e.g. 10 out of 222).
+        if player._bg_tasks:
+            await interaction.followup.send(
+                "⏳ Still loading tracks into the queue — waiting for it to finish before saving…",
+                ephemeral=True,
+            )
+            await player.wait_for_bg_tasks()
+
         tracks = player.queue_list()
         if player.current:
             tracks = [player.current] + tracks
