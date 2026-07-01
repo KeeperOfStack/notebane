@@ -75,7 +75,7 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(emoji="⏹", style=discord.ButtonStyle.danger, custom_id="np_stop")
     async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.player.stop()
+        await self.player.disconnect()
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
 
@@ -257,7 +257,7 @@ class MusicCog(commands.Cog, name="Music"):
         — so the first entry can start playing while the rest of the
         playlist is still resolving. See Phase 14 in plan.md.
         """
-        SEM_LIMIT = 4
+        SEM_LIMIT = 1  # one yt-dlp resolve at a time — prevents CPU/network starvation of the live audio stream
         sem = asyncio.Semaphore(SEM_LIMIT)
         # Result slots: None = pending/failed, Track = resolved
         results: list[Track | None] = [None] * len(entries)
@@ -330,6 +330,13 @@ class MusicCog(commands.Cog, name="Music"):
             summary = f"✅ **{playlist_title}** — {success_count} track(s) loaded"
             if failed:
                 summary += f" ({failed} failed)"
+            # Warn when we hit/approached the unauthenticated ceiling (~222 entries).
+            # If the user has no cookies, they may have missed tracks at the end of a large playlist.
+            if len(entries) >= 200 and not cookiefile:
+                summary += (
+                    "\n⚠️ **Large playlist** — YouTube caps unauthenticated fetches at ~222 tracks. "
+                    "Run `/ytlogin` to unlock the full playlist."
+                )
             await ch.send(summary)
 
     # ── /play ─────────────────────────────────────────────────────────────────
@@ -398,7 +405,7 @@ class MusicCog(commands.Cog, name="Music"):
                 content=None,
                 embed=_playlist_queued_embed(playlist_title, len(entries), interaction.user.display_name),
             )
-            asyncio.get_event_loop().create_task(
+            _task = asyncio.get_event_loop().create_task(
                 self._enqueue_playlist_bg(
                     interaction, player, entries, playlist_title,
                     requester=interaction.user.display_name,
@@ -406,6 +413,8 @@ class MusicCog(commands.Cog, name="Music"):
                     t_bg_start=t_start,
                 )
             )
+            player._bg_tasks.add(_task)
+            _task.add_done_callback(player._bg_tasks.discard)
         else:
             # Playlist URL that resolved to a single entry — resolve fully.
             entry = entries[0] if entries else None
@@ -508,7 +517,7 @@ class MusicCog(commands.Cog, name="Music"):
                     playlist_title, len(entries), interaction.user.display_name, next_up=True
                 ),
             )
-            asyncio.get_event_loop().create_task(
+            _task = asyncio.get_event_loop().create_task(
                 self._enqueue_playlist_bg(
                     interaction, player, entries, playlist_title,
                     requester=interaction.user.display_name,
@@ -517,6 +526,8 @@ class MusicCog(commands.Cog, name="Music"):
                     t_bg_start=t_start,
                 )
             )
+            player._bg_tasks.add(_task)
+            _task.add_done_callback(player._bg_tasks.discard)
         else:
             # Single track
             entry = entries[0] if entries else None
@@ -570,7 +581,7 @@ class MusicCog(commands.Cog, name="Music"):
         player = await _get_player(interaction, self.players)
         if player is None:
             return
-        await player.stop()
+        await player.disconnect()
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
     # ── /pause ────────────────────────────────────────────────────────────────

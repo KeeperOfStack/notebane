@@ -69,6 +69,7 @@ class GuildPlayer:
         self.loop_track = False
         self.loop_queue = False
         self._on_track_start = on_track_start  # called with (player, track) on each start
+        self._bg_tasks: set[asyncio.Task] = set()  # background enqueue tasks — cancelled on stop/disconnect
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -217,6 +218,12 @@ class GuildPlayer:
                 self.queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+
+        # Cancel any background enqueue tasks (playlist loaders) so they
+        # don't keep stuffing tracks back into the now-empty queue.
+        for t in list(self._bg_tasks):
+            t.cancel()
+        self._bg_tasks.clear()
 
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()
