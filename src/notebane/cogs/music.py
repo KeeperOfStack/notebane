@@ -255,16 +255,22 @@ class MusicCog(commands.Cog, name="Music"):
     ) -> None:
         """Resolve and enqueue playlist entries with bounded concurrency.
 
-        Uses a Semaphore(4) so up to 4 yt-dlp resolves run in parallel
-        (yt-dlp is I/O-bound on YouTube's HTTP responses, so 4 is a
-        good balance against tripping rate limits). Results are re-sorted
-        into original playlist order before enqueue/insert to preserve
-        user intent regardless of resolve completion order.
+        Uses SEM_LIMIT=1 so only one yt-dlp+deno process runs at a time,
+        ensuring the live audio stream is never CPU/network-starved.
 
-        For queue (`insert_next=False`), tracks are put on the queue in
-        order as soon as each contiguous prefix from index 0 has resolved
-        — so the first entry can start playing while the rest of the
-        playlist is still resolving. See Phase 14 in plan.md.
+        Both paths (queue and insert_next) use a progressive cursor so the
+        first resolved entry reaches the player as fast as possible without
+        waiting for the entire playlist to resolve.
+
+        Queue path (`insert_next=False`):
+          Tracks are put on the queue in order as each contiguous prefix
+          from index 0 has resolved — first entry starts playing immediately.
+
+        Insert-next path (`insert_next=True`):
+          Track[0] is inserted after the current song via insert_next().
+          Tracks[1..N] are inserted at a growing position right behind the
+          already-inserted playlist entries so original order is preserved
+          and they appear before any pre-existing queued songs.
         """
         SEM_LIMIT = 1  # one yt-dlp resolve at a time — prevents CPU/network starvation of the live audio stream
         sem = asyncio.Semaphore(SEM_LIMIT)
@@ -272,13 +278,15 @@ class MusicCog(commands.Cog, name="Music"):
         results: list[Track | None] = [None] * len(entries)
         failed_lock = asyncio.Lock()
         failed = 0
-        # For the queue path, we walk a cursor forward as contiguous
-        # results land so playback can start ASAP.
+        # Shared cursor — walks forward over contiguous resolved results.
         cursor = 0
         cursor_lock = asyncio.Lock()
+        # For insert_next: tracks how many playlist entries have been inserted
+        # at the front so we can slot the next one right behind them.
+        pn_insert_pos = 0
 
         async def _resolve_one(idx: int, entry: dict) -> None:
-            nonlocal failed, cursor
+            nonlocal failed, cursor, pn_insert_pos
             webpage_url = entry.get("webpage_url") or entry.get("url") or ""
             if not webpage_url:
                 async with failed_lock:
@@ -296,20 +304,31 @@ class MusicCog(commands.Cog, name="Music"):
                     async with failed_lock:
                         failed += 1
 
-            # Queue path: try to advance the enqueue cursor over any
-            # contiguous resolved prefix now that we've landed.
-            if not insert_next:
-                async with cursor_lock:
-                    while cursor < len(results) and results[cursor] is not None:
-                        track_to_enqueue = results[cursor]
-                        was_first = cursor == 0
-                        cursor += 1
-                        # release cursor lock briefly while we await queue.put
-                        # (queue.put is bounded and can block if full)
-                        await player.queue.put(track_to_enqueue)  # type: ignore[arg-type]
+            # Advance the cursor over any contiguous resolved prefix.
+            async with cursor_lock:
+                while cursor < len(results) and results[cursor] is not None:
+                    track_to_flush = results[cursor]
+                    was_first = cursor == 0
+                    cursor += 1
+
+                    if not insert_next:
+                        # Queue path: put at end; play loop picks it up immediately.
+                        await player.queue.put(track_to_flush)  # type: ignore[arg-type]
                         if was_first and t_bg_start is not None:
                             from notebane.metrics import record_play_latency
                             record_play_latency("playlist_first", time.perf_counter() - t_bg_start)
+                    else:
+                        # Insert-next path: maintain order at the front of queue.
+                        if was_first:
+                            # First track: push to immediately after current song.
+                            player.insert_next([track_to_flush])  # type: ignore[arg-type]
+                        else:
+                            # Subsequent tracks: slot right after the previously
+                            # inserted playlist entry so the playlist stays contiguous
+                            # and ahead of any pre-existing queued songs.
+                            pos = min(pn_insert_pos, player.queue.qsize())
+                            player.queue._queue.insert(pos, track_to_flush)  # type: ignore[attr-defined]
+                        pn_insert_pos += 1
 
         # Kick off every resolver concurrently; the semaphore bounds
         # how many actually run at once.
@@ -318,19 +337,18 @@ class MusicCog(commands.Cog, name="Music"):
             return_exceptions=False,
         )
 
-        if insert_next:
-            # Bulk-insert in original order, filtering pending/failed slots.
-            resolved_in_order = [t for t in results if t is not None]
-            if resolved_in_order:
-                player.insert_next(resolved_in_order)
-        else:
-            # Sweep any tail that didn't get flushed by the cursor
-            # (shouldn't happen with the loop above, but defensive).
-            async with cursor_lock:
-                while cursor < len(results):
-                    if results[cursor] is not None:
+        # Defensive sweep: flush any tail entries that the cursor missed
+        # (should not happen with SEM_LIMIT=1, but guards against edge cases).
+        async with cursor_lock:
+            while cursor < len(results):
+                if results[cursor] is not None:
+                    if not insert_next:
                         await player.queue.put(results[cursor])  # type: ignore[arg-type]
-                    cursor += 1
+                    else:
+                        pos = min(pn_insert_pos, player.queue.qsize())
+                        player.queue._queue.insert(pos, results[cursor])  # type: ignore[attr-defined]
+                        pn_insert_pos += 1
+                cursor += 1
 
         # Send a completion summary to the text channel
         ch = self._text_channels.get(player.channel_id)
