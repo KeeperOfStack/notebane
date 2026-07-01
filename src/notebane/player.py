@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
+from collections import deque
 
 import discord
 
@@ -21,6 +22,9 @@ FFMPEG_BEFORE_OPTIONS = (
     "-reconnect_delay_max 5"
 )
 FFMPEG_OPTIONS = "-vn"
+
+# Undo/redo history depth per voice session
+UNDO_DEPTH = 10
 
 
 @dataclass
@@ -71,6 +75,10 @@ class GuildPlayer:
         self.loop_queue = False
         self._on_track_start = on_track_start  # called with (player, track) on each start
         self._bg_tasks: set[asyncio.Task] = set()  # background enqueue tasks — cancelled on stop/disconnect
+
+        # Undo/redo stacks — in-memory, session-scoped (cleared on bot restart by design)
+        self._undo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
+        self._redo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -202,6 +210,53 @@ class GuildPlayer:
         """Snapshot of the queue as a list (index 0 = next up)."""
         return list(self.queue._queue)  # type: ignore[attr-defined]
 
+    # ── Undo / Redo ───────────────────────────────────────────────────────────
+
+    def record_mutation(self) -> None:
+        """Snapshot the current queue before a mutation. Clears the redo stack.
+
+        Must be called BEFORE any operation that changes the queue so that
+        /undo can restore the pre-change state.
+        """
+        self._undo_stack.append(self.queue_list())
+        self._redo_stack.clear()
+
+    def _replace_queue(self, tracks: list[Track]) -> None:
+        """Atomically replace the entire queue with `tracks`."""
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for t in tracks:
+            self.queue.put_nowait(t)
+
+    def undo(self) -> list[Track] | None:
+        """Revert the queue to its state before the last mutation.
+
+        Pushes the current queue onto the redo stack.
+        Returns the restored queue snapshot, or None if nothing to undo.
+        """
+        if not self._undo_stack:
+            return None
+        self._redo_stack.append(self.queue_list())
+        prev = self._undo_stack.pop()
+        self._replace_queue(prev)
+        return prev
+
+    def redo(self) -> list[Track] | None:
+        """Re-apply the last undone mutation.
+
+        Pushes the current queue onto the undo stack so the redo is itself
+        undoable. Returns the restored queue snapshot, or None if nothing to redo.
+        """
+        if not self._redo_stack:
+            return None
+        self._undo_stack.append(self.queue_list())
+        nxt = self._redo_stack.pop()
+        self._replace_queue(nxt)
+        return nxt
+
     def insert_next(self, tracks: list[Track]) -> None:
         """Insert one or more tracks immediately after the current song.
 
@@ -223,18 +278,29 @@ class GuildPlayer:
         self.loop_track = False
         self.loop_queue = False
 
-        # Drain queue
-        while not self.queue.empty():
-            try:
-                self.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        # Snapshot queue + current track BEFORE draining — powers /restore.
+        # Import here to avoid circular import at module level.
+        try:
+            from notebane.restore_db import save_snapshot
+            _snap_queue = self.queue_list()
+            _snap_current = self.current
+            if _snap_queue or _snap_current:
+                save_snapshot(self.guild_id, self.channel_id, _snap_current, _snap_queue)
+        except Exception:
+            log.exception("[guild=%d] Failed to save restore snapshot", self.guild_id)
 
         # Cancel any background enqueue tasks (playlist loaders) so they
         # don't keep stuffing tracks back into the now-empty queue.
         for t in list(self._bg_tasks):
             t.cancel()
         self._bg_tasks.clear()
+
+        # Drain queue
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()

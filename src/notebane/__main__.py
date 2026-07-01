@@ -121,10 +121,25 @@ class Notebane(commands.AutoShardedBot):
         from notebane.metrics import start_metrics_server
         from notebane.player import GuildPlayerManager
         from notebane.ytdl_updater import start_ytdlp_updater
+        from notebane.restore_db import init_db, purge_expired
 
         self.players: GuildPlayerManager = GuildPlayerManager()
 
         ensure_cookies_dir()
+
+        # Initialise the restore-snapshot DB and purge any expired rows on startup.
+        init_db()
+        purge_expired()
+
+        # Schedule hourly TTL purge
+        async def _hourly_purge() -> None:
+            while True:
+                await asyncio.sleep(3600)
+                try:
+                    purge_expired()
+                except Exception:
+                    log.exception("restore_db hourly purge failed")
+        self._restore_purge_task = asyncio.create_task(_hourly_purge())
 
         await self.load_extension("notebane.cogs.core")
         await self.load_extension("notebane.cogs.voice")
@@ -181,6 +196,8 @@ class Notebane(commands.AutoShardedBot):
         log.info("All voice clients disconnected — closing gateway")
 
         if task := getattr(self, "_ytdlp_updater_task", None):
+            task.cancel()
+        if task := getattr(self, "_restore_purge_task", None):
             task.cancel()
 
         await super().close()

@@ -17,6 +17,7 @@ from notebane.cookies import get_guild_cookiefile
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist
+from notebane.restore_db import clear_snapshot as _clear_restore_snapshot
 
 log = logging.getLogger("notebane.music")
 
@@ -404,6 +405,8 @@ class MusicCog(commands.Cog, name="Music"):
                 )
                 return
 
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             await player.queue.put(track)
             queue_size = player.queue.qsize()
             from notebane.metrics import record_play_latency
@@ -432,6 +435,8 @@ class MusicCog(commands.Cog, name="Music"):
                 content=None,
                 embed=_playlist_queued_embed(playlist_title, len(entries), interaction.user.display_name),
             )
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             _task = asyncio.get_event_loop().create_task(
                 self._enqueue_playlist_bg(
                     interaction, player, entries, playlist_title,
@@ -464,6 +469,8 @@ class MusicCog(commands.Cog, name="Music"):
                 )
                 return
 
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             await player.queue.put(track)
             queue_size = player.queue.qsize()
 
@@ -508,6 +515,8 @@ class MusicCog(commands.Cog, name="Music"):
                 )
                 return
 
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             player.insert_next([track])
             from notebane.metrics import record_play_latency
             record_play_latency("playnext_single", time.perf_counter() - t_start)
@@ -544,6 +553,8 @@ class MusicCog(commands.Cog, name="Music"):
                     playlist_title, len(entries), interaction.user.display_name, next_up=True
                 ),
             )
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             _task = asyncio.get_event_loop().create_task(
                 self._enqueue_playlist_bg(
                     interaction, player, entries, playlist_title,
@@ -577,6 +588,8 @@ class MusicCog(commands.Cog, name="Music"):
                 )
                 return
 
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
             player.insert_next([track])
             embed = discord.Embed(
                 title="▶ Up Next",
@@ -649,6 +662,7 @@ class MusicCog(commands.Cog, name="Music"):
         if len(tracks) < 2:
             await interaction.response.send_message("❌ Need at least 2 tracks in the queue to shuffle.", ephemeral=True)
             return
+        player.record_mutation()
         random.shuffle(tracks)
         # Rebuild the queue with shuffled order
         while not player.queue.empty():
@@ -733,6 +747,7 @@ class MusicCog(commands.Cog, name="Music"):
                 ephemeral=True,
             )
             return
+        player.record_mutation()
         removed = tracks.pop(idx)
         # Rebuild queue
         while not player.queue.empty():
@@ -746,9 +761,107 @@ class MusicCog(commands.Cog, name="Music"):
             f"🗑️ Removed **{removed.title}** from the queue.", ephemeral=True
         )
 
+    # ── /undo ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="undo", description="Undo the last change to the queue.")
+    async def undo(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        restored = player.undo()
+        if restored is None:
+            await interaction.response.send_message(
+                "❌ Nothing to undo — no queue history in this session.", ephemeral=True
+            )
+            return
+        count = len(restored)
+        embed = discord.Embed(
+            title="↩️ Undo",
+            description=f"Queue reverted. **{count}** track{'s' if count != 1 else ''} restored.",
+            colour=discord.Colour.orange(),
+        )
+        embed.set_footer(text=f"Use /redo to re-apply. Undo depth: {len(player._undo_stack)} remaining.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /redo ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="redo", description="Redo the last undone queue change.")
+    async def redo(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players)
+        if player is None:
+            return
+        restored = player.redo()
+        if restored is None:
+            await interaction.response.send_message(
+                "❌ Nothing to redo — make an undo first, or redo history was cleared by a new queue action.",
+                ephemeral=True,
+            )
+            return
+        count = len(restored)
+        embed = discord.Embed(
+            title="↪️ Redo",
+            description=f"Queue re-applied. **{count}** track{'s' if count != 1 else ''} restored.",
+            colour=discord.Colour.green(),
+        )
+        embed.set_footer(text=f"Redo depth: {len(player._redo_stack)} remaining.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /restore ──────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="restore", description="Restore your queue from before the bot stopped or you disconnected.")
+    async def restore(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+
+        player = await self._ensure_player(interaction)
+        if player is None:
+            return
+
+        from notebane.restore_db import load_snapshot
+        result = load_snapshot(
+            interaction.guild_id,  # type: ignore[arg-type]
+            player.channel_id,
+        )
+        if result is None:
+            await interaction.followup.send(
+                "❌ No saved queue found for this voice channel. "
+                "Snapshots are kept for 7 days and cleared when you start a new queue.",
+                ephemeral=True,
+            )
+            return
+
+        current_track, queued_tracks = result
+
+        # Build the full restore list: interrupted track first (pos 0), then queue
+        restore_list = []
+        if current_track:
+            restore_list.append(current_track)
+        restore_list.extend(queued_tracks)
+
+        if not restore_list:
+            await interaction.followup.send("❌ Saved queue was empty.", ephemeral=True)
+            return
+
+        # Snapshot current queue for undo, then replace
+        player.record_mutation()
+        player._replace_queue(restore_list)
+
+        total = len(restore_list)
+        current_label = f"**{current_track.title}**" if current_track else "none"
+        embed = discord.Embed(
+            title="🔄 Queue Restored",
+            description=(
+                f"**{total}** track{'s' if total != 1 else ''} restored.\n"
+                f"Resuming from: {current_label}"
+            ),
+            colour=discord.Colour.blurple(),
+        )
+        embed.set_footer(text="Use /undo to revert this restore.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 async def setup(bot: commands.AutoShardedBot) -> None:
     if not hasattr(bot, "players"):
         from notebane.player import GuildPlayerManager
         bot.players = GuildPlayerManager()  # type: ignore[attr-defined]
     await bot.add_cog(MusicCog(bot, bot.players))  # type: ignore[attr-defined]
+

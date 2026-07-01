@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 cookies.txt
 cookies/
+data/*.db
