@@ -33,6 +33,7 @@ class Track:
     duration: int | None = None   # seconds; None for livestreams
     thumbnail: str | None = None
     requester: str = "unknown"
+    http_headers: dict[str, str] | None = None  # headers yt-dlp says to send (User-Agent etc.)
 
     def duration_fmt(self) -> str:
         """Return HH:MM:SS or MM:SS string, or '∞' for streams."""
@@ -142,9 +143,19 @@ class GuildPlayer:
                 pass
 
             try:
+                # Build the before_options with any headers yt-dlp requires
+                # (e.g. User-Agent for ANDROID_VR client URLs — without these
+                # YouTube returns HTTP 403 and FFmpeg exits with code 8).
+                before_opts = FFMPEG_BEFORE_OPTIONS
+                if track.http_headers:
+                    header_str = "".join(
+                        f' -headers "{k}: {v}\\r\\n"'
+                        for k, v in track.http_headers.items()
+                    )
+                    before_opts = before_opts + header_str
                 source = discord.FFmpegOpusAudio(
                     track.url,
-                    before_options=FFMPEG_BEFORE_OPTIONS,
+                    before_options=before_opts,
                     options=FFMPEG_OPTIONS,
                 )
             except Exception:
