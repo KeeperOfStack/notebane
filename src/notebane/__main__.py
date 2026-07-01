@@ -122,6 +122,7 @@ class Notebane(commands.AutoShardedBot):
         from notebane.player import GuildPlayerManager
         from notebane.ytdl_updater import start_ytdlp_updater
         from notebane.restore_db import init_db, purge_expired
+        from notebane.playlist_db import init_playlist_tables
 
         self.players: GuildPlayerManager = GuildPlayerManager()
 
@@ -130,6 +131,7 @@ class Notebane(commands.AutoShardedBot):
         # Initialise the restore-snapshot DB and purge any expired rows on startup.
         init_db()
         purge_expired()
+        init_playlist_tables()
 
         # Schedule hourly TTL purge
         async def _hourly_purge() -> None:
@@ -146,6 +148,7 @@ class Notebane(commands.AutoShardedBot):
         await self.load_extension("notebane.cogs.music")
         await self.load_extension("notebane.cogs.search")
         await self.load_extension("notebane.cogs.auth")
+        await self.load_extension("notebane.cogs.playlists")
 
         # No global sync — we push commands guild-by-guild in on_ready and on_guild_join
         # so they appear instantly without the 1-hour global propagation delay.
