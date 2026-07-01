@@ -16,9 +16,10 @@
 - 🎚️ **Multi-VC per server** — each voice channel gets its own isolated player session
 - 🎵 **Full queue system** — add, skip, shuffle, loop, remove tracks
 - 📋 **Slash commands** — fully Discord application-command native
-- ⚡ **Low latency** — direct stream-to-voice pipeline, no intermediate disk writes
+- ⚡ **Fast start** — single-URL `/play` under 1.5s, playlist first-track under 2.5s (see [perf baseline](docs/phase11-quickplay/perf-baseline.md))
+- 🧠 **Smart cookies** — YouTube cookies only sent on age-gate retries or ≥200-entry playlists, never on public content (see [cookie policy](docs/phase11-quickplay/cookie-policy.md))
 - 🎛️ **Now Playing controls** — interactive ⏸/⏭/⏹ buttons on every track start message
-- 📃 **Playlist support** — full YouTube playlist loading via yt-dlp internal API (~2× more tracks than unauthenticated HTML scraping)
+- 📃 **Playlist support** — full YouTube playlist loading via yt-dlp internal API (~2× more tracks than unauthenticated HTML scraping), with parallel background resolve for fast queue loading
 
 ---
 
@@ -27,6 +28,8 @@
 - [🚀 Deployment Guide](docs/deployment.md) — Docker run, Portainer, and Compose setup
 - [📋 Command Reference](docs/commands.md) — all slash commands and what they do
 - [🏛️ Design & Architecture](docs/notebane/design.md) — full design, phase breakdown, internals
+- [🔐 YouTube Login (`/ytlogin`)](docs/ytlogin/README.md) — per-guild cookie upload for age-restricted content
+- [⚡ Quick-Play & Cookie Policy](docs/phase11-quickplay/README.md) — Phase 11 perf initiative: fast paths, parallel resolve, smart-cookie contract, and latency baseline
 
 ---
 
