@@ -214,6 +214,15 @@ class MusicCog(commands.Cog, name="Music"):
             return None
 
         player = self.players.get(interaction.guild_id, channel.id)
+        if player is not None and not player.is_connected:
+            # Stale player left in the manager after a disconnect (e.g. from /stop).
+            # Remove it so we create a fresh one below.
+            log.debug(
+                "[guild=%d channel=%d] evicting stale disconnected player",
+                interaction.guild_id, channel.id,
+            )
+            self.players.remove(interaction.guild_id, channel.id)
+            player = None
         if player is None:
             player = await _connect_to_channel(
                 interaction, channel, self.players, on_track_start=self._on_track_start
@@ -581,7 +590,10 @@ class MusicCog(commands.Cog, name="Music"):
         player = await _get_player(interaction, self.players)
         if player is None:
             return
+        guild_id = player.guild_id
+        channel_id = player.channel_id
         await player.disconnect()
+        self.players.remove(guild_id, channel_id)
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
     # ── /pause ────────────────────────────────────────────────────────────────
