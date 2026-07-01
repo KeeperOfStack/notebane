@@ -1,6 +1,6 @@
 # /undo, /redo, /restore
 
-**Status:** Planning complete — awaiting sign-off.
+**Status:** ✅ Complete — shipped and user tested.
 
 ## What this adds
 

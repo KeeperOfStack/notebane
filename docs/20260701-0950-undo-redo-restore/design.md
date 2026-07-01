@@ -1,7 +1,7 @@
 # /undo, /redo, /restore — Design
 
 **Brain:** `/media/chasm/projects/_cron/notebane/20260701-0950-undo-redo-restore/manifest.md`
-**Status:** Planning complete — awaiting sign-off to implement.
+**Status:** ✅ Complete — shipped `31d3dd0`, `8ec3cbc`. User tested.
 
 ---
 
