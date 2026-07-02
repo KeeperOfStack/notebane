@@ -74,14 +74,6 @@ services:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          cpus: "0.25"
-          memory: 256M
 ```
 
 ### 4. Click **Deploy the stack**
