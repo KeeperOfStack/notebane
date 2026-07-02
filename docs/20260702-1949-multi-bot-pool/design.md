@@ -101,11 +101,12 @@ environment:
 - `tests/test_bot_manager.py` — 27 unit tests, all passing
 - Commit: 8d36159
 
-### Phase 2 — Multi-client startup + graceful shutdown
-- Instantiate `discord.Client` per BotEntry
-- `asyncio.gather` all `client.start()` calls
-- SIGTERM → `client.close()` all clients
-- Existing single-bot entrypoint becomes a BotManager wrapper
+### Phase 2 — Multi-client startup + graceful shutdown ✅
+- `src/notebane/__main__.py` — Notebane gains `bot_number` + `bot_manager` params; `main()` builds pool, wires clients, gathers all bots; one bad bot doesn't kill others
+- `_run_bot()` — async-with guarantees `close()` on cancellation
+- `pytest.ini` added — asyncio_mode=auto, pythonpath=src
+- `tests/test_startup.py` — 10 new tests (37 total)
+- Commit: 0711470
 
 ### Phase 3 — Voice-channel affinity routing
 - Each command handler calls `BotManager.get_bot_for_user(member)`
