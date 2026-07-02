@@ -36,6 +36,29 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 | `/shuffle` | — | Shuffle all tracks in the queue randomly. The currently playing track is not affected. |
 | `/loop` | `track \| queue \| off` | Set loop mode. `track` repeats the current song, `queue` loops through all tracks, `off` disables looping. |
 | `/remove` | `position` | Remove a track from the queue by its position number (as shown in `/queue`). |
+| `/undo` | — | Undo the last change to the queue — restores it to how it was before the most recent add, remove, shuffle, or skip. |
+| `/redo` | — | Redo the last undone queue change. |
+| `/restore` | — | Restore your queue from before the bot stopped or you disconnected. Pulls from the last saved snapshot. |
+
+---
+
+## 🔍 Search
+
+| Command | Arguments | Description |
+|---|---|---|
+| `/search` | `query` | Search YouTube and pick from the top 5 results. Displays an interactive dropdown — select a track to add it to the queue. Times out after 60 seconds. |
+
+---
+
+## 💾 Playlists
+
+| Command | Arguments | Description |
+|---|---|---|
+| `/createlist` | `name` | Save the current queue as a named personal playlist. Name can contain letters, numbers, spaces, hyphens, and underscores. Up to 25 playlists per user, 500 tracks per playlist. |
+| `/listplaylist` | — | List all your saved playlists — shows track count and a preview. Select one from the dropdown to load it directly. |
+| `/loadlist` | `name` | Load one of your saved playlists into the queue. Stubs are enqueued instantly; stream URLs resolve just-in-time as each track plays. Supports autocomplete. |
+| `/removelist` | `name` | Permanently delete one of your saved playlists. Prompts for confirmation before deleting. Supports autocomplete. |
+| `/editplaylist` | `name` | Open an interactive editor for a saved playlist — add tracks, remove by position, or move tracks up and down. Supports autocomplete. |
 
 ---
 
