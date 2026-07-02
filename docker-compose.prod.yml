@@ -11,6 +11,7 @@
 services:
   notebane:
     image: ghcr.io/keeperofstack/notebane:latest
+    container_name: notebane
     restart: unless-stopped
     env_file:
       - .env
