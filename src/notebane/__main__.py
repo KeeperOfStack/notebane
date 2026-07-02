@@ -1,5 +1,7 @@
 """Notebane entrypoint."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -7,10 +9,13 @@ import logging.handlers
 import os
 import sys
 import time
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands
 
+if TYPE_CHECKING:
+    from notebane.bot_manager import BotManager
 
 log = logging.getLogger("notebane")
 
@@ -93,9 +98,20 @@ def _apply_env_overrides() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class Notebane(commands.AutoShardedBot):
-    """Main bot class with AutoSharding for 100+ guild scale."""
+    """Main bot class with AutoSharding for 100+ guild scale.
 
-    def __init__(self) -> None:
+    In single-bot deployments bot_number is always 1.
+    In multi-bot pools each instance carries its own number for logging clarity.
+    bot_manager is the shared BotManager pool; it is None only in legacy mode
+    where BotManager could not be constructed (should not happen in practice).
+    """
+
+    def __init__(
+        self,
+        *,
+        bot_number: int = 1,
+        bot_manager: "BotManager | None" = None,
+    ) -> None:
         intents = discord.Intents.default()
         intents.voice_states = True
         intents.message_content = True  # needed to read attachments in on_message
@@ -105,9 +121,12 @@ class Notebane(commands.AutoShardedBot):
         if sc_env:
             try:
                 shard_count = int(sc_env)
-                log.info("Using manual shard count: %d", shard_count)
+                log.info("Bot %d: using manual shard count: %d", bot_number, shard_count)
             except ValueError:
-                log.warning("SHARD_COUNT=%r is not a valid integer — using auto", sc_env)
+                log.warning(
+                    "Bot %d: SHARD_COUNT=%r is not a valid integer — using auto",
+                    bot_number, sc_env,
+                )
 
         super().__init__(
             command_prefix=commands.when_mentioned,
@@ -115,6 +134,12 @@ class Notebane(commands.AutoShardedBot):
             help_command=None,
             shard_count=shard_count,
         )
+
+        self._bot_number = bot_number
+        # Shared pool reference — used by Phase 3 routing in cogs.
+        # All Notebane instances in a multi-bot deployment share the same
+        # BotManager object so routing decisions are consistent across bots.
+        self.bot_manager: BotManager | None = bot_manager
 
     async def setup_hook(self) -> None:
         from notebane.cookies import ensure_cookies_dir
@@ -140,7 +165,7 @@ class Notebane(commands.AutoShardedBot):
                 try:
                     purge_expired()
                 except Exception:
-                    log.exception("restore_db hourly purge failed")
+                    log.exception("Bot %d: restore_db hourly purge failed", self._bot_number)
         self._restore_purge_task = asyncio.create_task(_hourly_purge())
 
         await self.load_extension("notebane.cogs.core")
@@ -152,24 +177,39 @@ class Notebane(commands.AutoShardedBot):
 
         # No global sync — we push commands guild-by-guild in on_ready and on_guild_join
         # so they appear instantly without the 1-hour global propagation delay.
-        log.info("All cogs loaded")
+        log.info("Bot %d: all cogs loaded", self._bot_number)
 
-        await start_metrics_server(self, self.players)
-        self._ytdlp_updater_task = await start_ytdlp_updater()
+        # Metrics server: only Bot 1 runs it (it is the primary/favourite bot).
+        # In multi-bot mode Bot 1 is always the first-assigned bot, so its
+        # player count and guild stats reflect the most-active instance.
+        if self._bot_number == 1:
+            from notebane.metrics import start_metrics_server
+            from notebane.ytdl_updater import start_ytdlp_updater
+            self._metrics_task = await start_metrics_server(self, self.players)
+            self._ytdlp_updater_task = await start_ytdlp_updater()
+        else:
+            self._metrics_task = None
+            self._ytdlp_updater_task = None
 
     async def on_ready(self) -> None:
         # Guild-scope sync so commands appear instantly on every server
-        # (global commands can take up to 1 hour to propagate)
         for guild in self.guilds:
             try:
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
-                log.info("Guild-synced commands to %s (%d)", guild.name, guild.id)
+                log.info(
+                    "Bot %d: guild-synced commands to %s (%d)",
+                    self._bot_number, guild.name, guild.id,
+                )
             except Exception as exc:
-                log.warning("Failed to guild-sync to %s (%d): %s", guild.name, guild.id, exc)
+                log.warning(
+                    "Bot %d: failed to guild-sync to %s (%d): %s",
+                    self._bot_number, guild.name, guild.id, exc,
+                )
 
         log.info(
-            "Notebane ready | user=%s | guilds=%d | shards=%d",
+            "Bot %d ready | user=%s | guilds=%d | shards=%d",
+            self._bot_number,
             self.user,
             len(self.guilds),
             self.shard_count or 1,
@@ -180,13 +220,22 @@ class Notebane(commands.AutoShardedBot):
         try:
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-            log.info("Guild-synced commands to new guild %s (%d)", guild.name, guild.id)
+            log.info(
+                "Bot %d: guild-synced commands to new guild %s (%d)",
+                self._bot_number, guild.name, guild.id,
+            )
         except Exception as exc:
-            log.warning("Failed to guild-sync on join to %s (%d): %s", guild.name, guild.id, exc)
+            log.warning(
+                "Bot %d: failed to guild-sync on join to %s (%d): %s",
+                self._bot_number, guild.name, guild.id, exc,
+            )
 
     async def close(self) -> None:
         """Graceful shutdown — disconnect all voice clients before closing."""
-        log.info("Shutdown initiated — disconnecting %d active player(s)…", self.players.total)
+        log.info(
+            "Bot %d: shutdown initiated — disconnecting %d active player(s)…",
+            self._bot_number, self.players.total,
+        )
         players = list(self.players._players.values())
         if players:
             results = await asyncio.gather(
@@ -195,15 +244,34 @@ class Notebane(commands.AutoShardedBot):
             )
             for exc in results:
                 if isinstance(exc, Exception):
-                    log.warning("Error disconnecting player during shutdown: %s", exc)
-        log.info("All voice clients disconnected — closing gateway")
+                    log.warning(
+                        "Bot %d: error disconnecting player during shutdown: %s",
+                        self._bot_number, exc,
+                    )
+        log.info("Bot %d: all voice clients disconnected — closing gateway", self._bot_number)
 
         if task := getattr(self, "_ytdlp_updater_task", None):
             task.cancel()
         if task := getattr(self, "_restore_purge_task", None):
             task.cancel()
+        if task := getattr(self, "_metrics_task", None):
+            task.cancel()
 
         await super().close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-bot runner (used by multi-bot gather)
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _run_bot(bot: Notebane, token: str) -> None:
+    """Start one bot instance and keep it running until closed or cancelled.
+
+    The ``async with bot`` pattern ensures ``bot.close()`` is called even if
+    the task is cancelled (e.g. on SIGTERM), giving every bot a clean shutdown.
+    """
+    async with bot:
+        await bot.start(token)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -212,16 +280,43 @@ class Notebane(commands.AutoShardedBot):
 
 async def main() -> None:
     setup_logging()
-
-    token = os.getenv("DISCORD_TOKEN")
-    if not token:
-        log.error("DISCORD_TOKEN environment variable is not set")
-        sys.exit(1)
-
     _apply_env_overrides()
 
-    async with Notebane() as bot:
-        await bot.start(token)
+    from notebane.bot_manager import BotManager
+
+    try:
+        pool = BotManager.from_env()
+    except RuntimeError as exc:
+        log.error("%s", exc)
+        sys.exit(1)
+
+    # Build one Notebane instance per pool entry and inject the client reference
+    # back into the BotEntry so BotManager can route commands to it (Phase 3+).
+    bots: list[Notebane] = []
+    for entry in pool.bots:
+        bot = Notebane(bot_number=entry.number, bot_manager=pool)
+        entry.client = bot
+        bots.append(bot)
+
+    if pool.is_single_bot:
+        log.info("Single-bot mode — starting Bot 1")
+    else:
+        log.info("Multi-bot mode — starting pool of %d bots", pool.count)
+
+    # Start all bots concurrently.
+    # return_exceptions=True keeps the gather alive if one bot exits with an
+    # error — the others continue serving.  On SIGTERM the gather task itself
+    # is cancelled, which propagates CancelledError to every child task and
+    # triggers each bot's close() via the async-with context manager.
+    results = await asyncio.gather(
+        *[_run_bot(entry.client, entry.token) for entry in pool.bots],
+        return_exceptions=True,
+    )
+
+    # Log any unexpected errors from individual bots so they're not silently swallowed.
+    for entry, result in zip(pool.bots, results):
+        if isinstance(result, Exception) and not isinstance(result, (KeyboardInterrupt, SystemExit)):
+            log.error("Bot %d exited with error: %s", entry.number, result)
 
 
 if __name__ == "__main__":
