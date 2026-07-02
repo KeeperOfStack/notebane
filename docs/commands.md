@@ -6,7 +6,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## 🔊 Voice
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/join` | `[channel]` | Join a voice channel. Defaults to your current VC. If `channel` is specified, joins that one directly. |
 | `/leave` | `[channel]` | Leave a voice channel and clear its queue. Defaults to your current VC. If the bot is in multiple channels, you must specify which one. |
@@ -16,7 +16,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## ▶ Playback
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/play` | `query` | Play a song or playlist, or add to the queue. Accepts YouTube URLs, playlist URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC. For playlists, tracks are added in order — playback starts immediately while the rest load in the background. Uses yt-dlp's internal API to maximise playlist coverage without authentication. **If you right-click a track inside a YouTube auto-mix and paste the long URL, only that single video plays** — use `/playytmix` to load the full mix. |
 | `/playnext` | `query` | Insert a song or playlist to play immediately after the current track. For playlists, the full playlist is inserted in order before whatever was next in the queue. Same mix-stripping behaviour as `/play`. |
@@ -32,7 +32,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## 📋 Queue
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/queue` | `[page]` | Show the track queue, paginated at 10 tracks per page. Shows current track, upcoming tracks, and total count. Uses deferred response to avoid Discord's 3-second timeout. |
 | `/nowplaying` | — | Show what's currently playing with track title, requester, duration, and queue position. Each track also posts a **Now Playing** message automatically with ⏮/⏸/⏭/⏹ buttons for inline control. |
@@ -47,7 +47,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## 🔍 Search
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/search` | `query` | Search YouTube and pick from the top 5 results. Displays an interactive dropdown — select a track to add it to the queue. Times out after 60 seconds. |
 
@@ -55,7 +55,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## 💾 Playlists
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/createlist` | `name` | Save the current queue as a named personal playlist. Name can contain letters, numbers, spaces, hyphens, and underscores. Up to 25 playlists per user, 500 tracks per playlist. |
 | `/listplaylist` | — | List all your saved playlists — shows track count and a preview. Select one from the dropdown to load it directly. |
@@ -67,7 +67,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 ## 🤖 Bot
 
-| Command | Arguments | Description |
+| <div style="min-width:160px">Command</div> | Arguments | Description |
 |---|---|---|
 | `/ytlogin` | `[browser]` | Link a YouTube account to this server for full playlist access and age-restricted content. Choose your browser (Chrome, Firefox, Edge, Brave, Safari) to get step-by-step export instructions, then upload the `cookies.txt` file as an attachment. Server-wide — all users benefit. |
 | `/ytlogout` | — | Remove the linked YouTube account from this server, reverting to default unauthenticated access. |
