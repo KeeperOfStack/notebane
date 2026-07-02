@@ -21,18 +21,20 @@ No config files, no cloning. Paste this with your tokens filled in and you're ru
 docker run -d \
   --name notebane \
   --restart unless-stopped \
-  -e DISCORD_TOKEN=*** \
+  -e DISCORD_TOKEN=your_token_here \
   -e APPLICATION_ID=your_application_id_here \
   -e PUID=1000 \
   -e PGID=1000 \
   -e LOG_FORMAT=json \
-  -v ./cookies:/cookies \
-  -v ./data:/data \
+  -v notebane_cookies:/cookies \
+  -v notebane_data:/data \
   --log-driver json-file \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
   ghcr.io/keeperofstack/notebane:latest
 ```
+
+> Set `PUID` and `PGID` to your host user's IDs. Run `id -u` and `id -g` to find them. Defaults (`1000`/`1000`) work for most single-user Linux setups.
 
 ### Verify it's running
 
@@ -42,7 +44,7 @@ docker logs notebane --tail=20
 
 You should see:
 ```
-{"level": "INFO", "msg": "Synced 18 slash commands"}
+{"level": "INFO", "msg": "Notebane ready | ..."}
 ```
 
 ### Updating
@@ -52,6 +54,8 @@ docker stop notebane && docker rm notebane
 docker pull ghcr.io/keeperofstack/notebane:latest
 # Re-run the docker run command above
 ```
+
+> Named volumes (`notebane_cookies`, `notebane_data`) persist across container removal and redeploys — your database and cookies are safe.
 
 ---
 
@@ -76,15 +80,21 @@ services:
       PGID: 1000
       LOG_FORMAT: json
     volumes:
-      - ./cookies:/cookies
-      - ./data:/data
+      - notebane_cookies:/cookies
+      - notebane_data:/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s
+
+volumes:
+  notebane_cookies:
+  notebane_data:
 ```
+
+> Set `PUID`/`PGID` to your host user's IDs (`id -u` / `id -g`). Defaults work for most setups.
 
 ### 4. Click **Deploy the stack**
 
@@ -92,6 +102,8 @@ services:
 
 1. Go to your stack → **Editor**
 2. Click **Pull and redeploy**
+
+> Your data is stored in named Docker volumes and survives every redeploy.
 
 ---
 
@@ -119,24 +131,21 @@ DISCORD_TOKEN=your_token_here
 APPLICATION_ID=your_application_id_here
 
 # Optional
+PUID=1000
+PGID=1000
 LOG_LEVEL=INFO
 # METRICS_PORT=9090
-# YTDL_COOKIEFILE=/cookies/cookies.txt
 ```
 
-### 3. Pull the latest image
-
-```bash
-docker pull ghcr.io/keeperofstack/notebane:latest
-```
-
-### 4. Start the container
+### 3. Start the container
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### 5. Verify it's running
+Docker will automatically create the named volumes `notebane_cookies` and `notebane_data` on first run.
+
+### 4. Verify it's running
 
 ```bash
 docker compose -f docker-compose.prod.yml logs --tail=30
@@ -145,10 +154,11 @@ docker compose -f docker-compose.prod.yml logs --tail=30
 ### Updating to a newer version
 
 ```bash
-docker compose -f docker-compose.prod.yml down
-docker pull ghcr.io/keeperofstack/notebane:latest
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --force-recreate
 ```
+
+> Data in named volumes is never touched by `pull` or `up` — it persists automatically.
 
 ---
 
@@ -158,8 +168,8 @@ docker compose -f docker-compose.prod.yml up -d
 |---|---|---|---|
 | `DISCORD_TOKEN` | ✅ | — | Bot token from Discord Developer Portal |
 | `APPLICATION_ID` | ✅ | — | Application ID from Discord Developer Portal |
-| `PUID` | ❌ | `1000` | Host user ID to run the bot process as. Set to your Docker host user's UID (`id -u`) |
-| `PGID` | ❌ | `1000` | Host group ID to run the bot process as. Set to your Docker host user's GID (`id -g`) |
+| `PUID` | ❌ | `1000` | Host user ID to run as. Run `id -u` on your host to find it |
+| `PGID` | ❌ | `1000` | Host group ID to run as. Run `id -g` on your host to find it |
 | `LOG_LEVEL` | ❌ | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) |
 | `LOG_FORMAT` | ❌ | `json` | Log format (`json` or `text`) |
 | `SHARD_COUNT` | ❌ | auto | Override Discord's shard count calculation |

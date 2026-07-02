@@ -5,8 +5,6 @@
 # Prerequisites:
 #   1. Create .env from .env.example and fill in DISCORD_TOKEN + APPLICATION_ID
 #   2. (Optional) Set METRICS_PORT=9090 and uncomment the ports section below
-#   3. Pull latest image:
-#        docker pull ghcr.io/keeperofstack/notebane:latest
 
 services:
   notebane:
@@ -20,8 +18,8 @@ services:
       PUID: 1000               # host user ID to run as — match your Docker host user
       PGID: 1000               # host group ID to run as — match your Docker host group
     volumes:
-      - ./cookies:/cookies     # per-guild YouTube cookies from /ytlogin
-      - ./data:/data           # restore snapshots (SQLite — survives bot restarts)
+      - notebane_cookies:/cookies  # per-guild YouTube cookies from /ytlogin
+      - notebane_data:/data        # SQLite DB — queue snapshots + user playlists
     # Uncomment to expose Prometheus /metrics + /health (set METRICS_PORT in .env)
     # ports:
     #   - "9090:9090"
@@ -31,3 +29,7 @@ services:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s     # allow graceful VC disconnect before SIGKILL
+
+volumes:
+  notebane_cookies:
+  notebane_data:
