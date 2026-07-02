@@ -14,7 +14,6 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from notebane.restore_db import _conn  # reuse the same DB connection helper
