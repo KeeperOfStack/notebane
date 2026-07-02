@@ -36,20 +36,33 @@
 
 ## 🚀 Quick Start
 
+**1. Create persistent volumes:**
+
+```bash
+docker volume create notebane_data
+docker volume create notebane_cookies
+```
+
+**2. Run the container:**
+
 ```bash
 docker run -d \
   --name notebane \
   --restart unless-stopped \
   -e DISCORD_TOKEN=*** \
   -e APPLICATION_ID=your_application_id_here \
+  -e PUID=1000 \
+  -e PGID=1000 \
   -e LOG_FORMAT=json \
+  -v notebane_cookies:/cookies \
+  -v notebane_data:/data \
   --log-driver json-file \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
   ghcr.io/keeperofstack/notebane:latest
 ```
 
-See the full [Deployment Guide](docs/deployment.md) for Portainer and advanced options.
+See the full [Deployment Guide](docs/deployment.md) for Portainer, Compose, and bind mount options.
 
 ---
 
