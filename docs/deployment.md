@@ -21,12 +21,12 @@ Notebane needs two persistent volumes — one for the database (queue snapshots 
 
 Docker manages the storage for you. No folders to create, no permissions to set.
 
+**Method 2 (Portainer) and Method 3 (Compose) create these volumes automatically on first deploy.** For Method 1 (docker run), you need to create them first:
+
 ```bash
 docker volume create notebane_data
 docker volume create notebane_cookies
 ```
-
-Run this once before deploying. If you skip it, `docker compose up` will create them automatically anyway.
 
 ### Option B — Local Bind Mounts
 
@@ -96,23 +96,11 @@ docker pull ghcr.io/keeperofstack/notebane:latest
 
 ## Method 2: Portainer Stack
 
-### 1. Create the volumes first
+### 1. Open Portainer → **Stacks** → **Add Stack**
 
-In Portainer → **Volumes** → **Add Volume** — create two volumes named:
-- `notebane_data`
-- `notebane_cookies`
+### 2. Name it `notebane`
 
-Or run on your host before deploying:
-```bash
-docker volume create notebane_data
-docker volume create notebane_cookies
-```
-
-### 2. Open Portainer → **Stacks** → **Add Stack**
-
-### 3. Name it `notebane`
-
-### 4. Paste the following into the Web Editor:
+### 3. Paste the following into the Web Editor:
 
 ```yaml
 services:
@@ -138,14 +126,12 @@ services:
 
 volumes:
   notebane_cookies:
-    external: true
   notebane_data:
-    external: true
 ```
 
 > Set `PUID`/`PGID` to your host user's IDs (`id -u` / `id -g`). Defaults work for most setups.
 
-### 5. Click **Deploy the stack**
+### 4. Click **Deploy the stack**
 
 ### Updating in Portainer
 
@@ -167,14 +153,7 @@ git clone https://github.com/KeeperOfStack/notebane.git
 cd notebane
 ```
 
-### 2. Create the volumes
-
-```bash
-docker volume create notebane_data
-docker volume create notebane_cookies
-```
-
-### 3. Create your `.env` file
+### 2. Create your `.env` file
 
 ```bash
 cp .env.example .env
@@ -193,13 +172,13 @@ LOG_LEVEL=INFO
 # METRICS_PORT=9090
 ```
 
-### 4. Start the container
+### 3. Start the container
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### 5. Verify it's running
+### 4. Verify it's running
 
 ```bash
 docker compose -f docker-compose.prod.yml logs --tail=30
