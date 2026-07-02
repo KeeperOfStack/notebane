@@ -1048,16 +1048,22 @@ class MusicCog(commands.Cog, name="Music"):
         player = await _get_player(interaction, self.players)
         if player is None:
             return
+        before_count = len(player.queue_list())
         restored = player.undo()
         if restored is None:
             await interaction.response.send_message(
                 "❌ Nothing to undo — no queue history in this session.", ephemeral=True
             )
             return
-        count = len(restored)
+        after_count = len(restored)
+        removed = before_count - after_count
+        if removed > 0:
+            desc = f"Removed **{removed}** track{'s' if removed != 1 else ''}. Queue restored to **{after_count}** track{'s' if after_count != 1 else ''}."
+        else:
+            desc = f"Queue reverted to **{after_count}** track{'s' if after_count != 1 else ''}."
         embed = discord.Embed(
             title="↩️ Undo",
-            description=f"Queue reverted. **{count}** track{'s' if count != 1 else ''} restored.",
+            description=desc,
             colour=discord.Colour.orange(),
         )
         embed.set_footer(text=f"Use /redo to re-apply. Undo depth: {len(player._undo_stack)} remaining.")
