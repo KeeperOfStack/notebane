@@ -25,28 +25,36 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 # FFmpeg for audio pipeline (Opus passthrough); Deno provides the JS runtime
 # yt-dlp uses to solve YouTube's signature/n-challenge (without it, age-gated
-# and some normal videos return zero playable formats — only image storyboards)
-RUN apk add --no-cache ffmpeg curl deno
+# and some normal videos return zero playable formats — only image storyboards).
+# su-exec: lightweight privilege-drop (like gosu) for the entrypoint.
+# shadow: provides usermod/groupmod so PUID/PGID remapping works at runtime.
+RUN apk add --no-cache ffmpeg curl deno su-exec shadow
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application source
+# Copy application source and entrypoint
 COPY src/ /app/src/
+COPY entrypoint.sh /entrypoint.sh
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
-    LOG_FORMAT=json
+    LOG_FORMAT=json \
+    PUID=1000 \
+    PGID=1000
 
-# Run as non-root
+# Create the notebane user/group that the entrypoint will remap to PUID/PGID
 RUN addgroup -S notebane && adduser -S notebane -G notebane
-USER notebane
+
+# Pre-create volume mount points with correct ownership
+RUN mkdir -p /cookies /data && chown notebane:notebane /cookies /data
 
 # Health check: if METRICS_PORT is set, poll /health; otherwise skip (exit 0)
 # The bot process itself keeps the container alive — if it crashes, Docker restarts it.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD sh -c '[ -z "${METRICS_PORT}" ] && exit 0; curl -fs http://127.0.0.1:${METRICS_PORT}/health > /dev/null 2>&1'
 
-ENTRYPOINT ["python", "-m", "notebane"]
+# Entrypoint runs as root, remaps uid/gid, fixes volume ownership, then drops privileges
+ENTRYPOINT ["/entrypoint.sh"]

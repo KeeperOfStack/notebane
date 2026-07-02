@@ -17,6 +17,8 @@ services:
       - .env
     environment:
       LOG_FORMAT: json         # structured JSON logs for aggregators
+      PUID: 1000               # host user ID to run as — match your Docker host user
+      PGID: 1000               # host group ID to run as — match your Docker host group
     volumes:
       - ./cookies:/cookies     # per-guild YouTube cookies from /ytlogin
       - ./data:/data           # restore snapshots (SQLite — survives bot restarts)

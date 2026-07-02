@@ -21,9 +21,13 @@ No config files, no cloning. Paste this with your tokens filled in and you're ru
 docker run -d \
   --name notebane \
   --restart unless-stopped \
-  -e DISCORD_TOKEN=your_token_here \
+  -e DISCORD_TOKEN=*** \
   -e APPLICATION_ID=your_application_id_here \
+  -e PUID=1000 \
+  -e PGID=1000 \
   -e LOG_FORMAT=json \
+  -v ./cookies:/cookies \
+  -v ./data:/data \
   --log-driver json-file \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
@@ -68,7 +72,12 @@ services:
     environment:
       DISCORD_TOKEN: your_token_here
       APPLICATION_ID: your_application_id_here
+      PUID: 1000
+      PGID: 1000
       LOG_FORMAT: json
+    volumes:
+      - ./cookies:/cookies
+      - ./data:/data
     logging:
       driver: "json-file"
       options:
@@ -149,6 +158,8 @@ docker compose -f docker-compose.prod.yml up -d
 |---|---|---|---|
 | `DISCORD_TOKEN` | ✅ | — | Bot token from Discord Developer Portal |
 | `APPLICATION_ID` | ✅ | — | Application ID from Discord Developer Portal |
+| `PUID` | ❌ | `1000` | Host user ID to run the bot process as. Set to your Docker host user's UID (`id -u`) |
+| `PGID` | ❌ | `1000` | Host group ID to run the bot process as. Set to your Docker host user's GID (`id -g`) |
 | `LOG_LEVEL` | ❌ | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) |
 | `LOG_FORMAT` | ❌ | `json` | Log format (`json` or `text`) |
 | `SHARD_COUNT` | ❌ | auto | Override Discord's shard count calculation |
