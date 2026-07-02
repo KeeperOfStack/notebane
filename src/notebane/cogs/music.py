@@ -16,7 +16,7 @@ from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
 from notebane.cookies import get_guild_cookiefile
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
-from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist
+from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist, strip_mix_context
 from notebane.restore_db import clear_snapshot as _clear_restore_snapshot
 
 log = logging.getLogger("notebane.music")
@@ -434,6 +434,12 @@ class MusicCog(commands.Cog, name="Music"):
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
+        # Strip YouTube auto-mix list context (list=RD*, RDMM*, etc.) when a
+        # specific video ID is present — user right-clicked a track in a mix.
+        # Pure playlist URLs (list=PL*, /playlist?list=...) are unchanged.
+        # Use /playytmix to intentionally load the full mix.
+        query = strip_mix_context(query)
+
         # ── Fast path: single video URL or search term ─────────────────
         # Skip the flat-extract playlist step entirely — one yt-dlp call
         # instead of two. See docs/phase11-quickplay/plan.md phase 13.
@@ -541,6 +547,9 @@ class MusicCog(commands.Cog, name="Music"):
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
+        # Strip YouTube auto-mix list context — same logic as /play.
+        query = strip_mix_context(query)
+
         # ── Fast path: single video URL or search term ─────────────────
         if not looks_like_playlist(query):
             try:
@@ -641,6 +650,105 @@ class MusicCog(commands.Cog, name="Music"):
             if track.thumbnail:
                 embed.set_thumbnail(url=track.thumbnail)
             await interaction.edit_original_response(content=None, embed=embed)
+
+    # ── /playytmix ────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="playytmix", description="Load a full YouTube auto-mix or radio playlist into the queue.")
+    @app_commands.describe(query="YouTube mix/radio URL (the long link with list=RD... from right-clicking a track)")
+    async def playytmix(self, interaction: discord.Interaction, query: str) -> None:
+        """Intentionally load a full YouTube auto-mix — bypasses the mix-strip that /play applies."""
+        t_start = time.perf_counter()
+        await interaction.response.defer()
+
+        player = await self._ensure_player(interaction)
+        if player is None:
+            return
+
+        cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+        player._cookiefile = cookiefile
+
+        await interaction.followup.send(f"🔍 Loading mix `{query}`…")
+
+        # No strip_mix_context here — that's the whole point of this command.
+        # If the URL isn't actually a playlist, fall back to single-track resolve.
+        if not looks_like_playlist(query):
+            try:
+                track = await resolve(query, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            await player.queue.put(track)
+            queue_size = player.queue.qsize()
+            if player.current is not None:
+                await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
+            else:
+                await interaction.edit_original_response(content="▶️ Starting playback…")
+            return
+
+        try:
+            entries = await resolve_playlist(query, cookiefile=cookiefile)
+        except YTDLError as exc:
+            from notebane.metrics import record_ytdl_error
+            record_ytdl_error()
+            await interaction.edit_original_response(
+                content=None,
+                embed=err_embed(f"Could not load mix: `{query}`\n> {exc}", title="Not Found"),
+            )
+            return
+
+        if len(entries) > 1:
+            playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or "YouTube Mix"
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            count = self._enqueue_playlist_stubs(
+                player, entries, requester=interaction.user.display_name
+            )
+            log.info("[guild=%d] /playytmix queued %d stubs", player.guild_id, count)
+            if count >= 200:
+                playlist_title += (
+                    "\n⚠️ **Large mix** — YouTube caps unauthenticated fetches at ~222 tracks. "
+                    "Run `/ytlogin` to unlock more."
+                )
+            await interaction.edit_original_response(
+                content=None,
+                embed=_playlist_queued_embed(playlist_title, count, interaction.user.display_name),
+            )
+        else:
+            entry = entries[0] if entries else None
+            url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
+            try:
+                track = await resolve(url, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            await player.queue.put(track)
+            queue_size = player.queue.qsize()
+            if player.current is not None:
+                await interaction.edit_original_response(content=None, embed=_queued_embed(track, queue_size))
+            else:
+                await interaction.edit_original_response(content="▶️ Starting playback…")
 
     # ── /skip ─────────────────────────────────────────────────────────────────
 

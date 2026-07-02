@@ -18,8 +18,9 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 | Command | Arguments | Description |
 |---|---|---|
-| `/play` | `query` | Play a song or playlist, or add to the queue. Accepts YouTube URLs, playlist URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC. For playlists, tracks are added in order — playback starts immediately while the rest load in the background. Uses yt-dlp's internal API to maximise playlist coverage without authentication. |
-| `/playnext` | `query` | Insert a song or playlist to play immediately after the current track. For playlists, the full playlist is inserted in order before whatever was next in the queue. |
+| `/play` | `query` | Play a song or playlist, or add to the queue. Accepts YouTube URLs, playlist URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC. For playlists, tracks are added in order — playback starts immediately while the rest load in the background. Uses yt-dlp's internal API to maximise playlist coverage without authentication. **If you right-click a track inside a YouTube auto-mix and paste the long URL, only that single video plays** — use `/playytmix` to load the full mix. |
+| `/playnext` | `query` | Insert a song or playlist to play immediately after the current track. For playlists, the full playlist is inserted in order before whatever was next in the queue. Same mix-stripping behaviour as `/play`. |
+| `/playytmix` | `query` | Intentionally load a full YouTube auto-mix or radio playlist. Paste the long URL from right-clicking a track inside a YouTube mix — this loads every track YouTube makes available in the mix (~50–200 tracks). Use `/ytlogin` to unlock larger mixes. |
 | `/skip` | — | Skip the current track and advance to the next one in the queue. |
 | `/previous` | — | Go back to the previous track. Replays the last track that finished. History holds up to 20 tracks per session. |
 | `/stop` | — | Stop playback and clear the entire queue. Bot stays in the channel. |
@@ -80,7 +81,8 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 
 - `/play` accepts almost any audio source yt-dlp supports — YouTube, SoundCloud, Bandcamp, direct URLs, and plain search terms like `/play lofi hip hop`
 - For YouTube playlists, the bot uses yt-dlp's internal API (`youtubetab:skip=webpage`) to fetch ~2× more entries than unauthenticated HTML scraping. Tracks load in playlist order in the background while playback starts immediately
-- Every track auto-posts a **Now Playing** embed with ⏸ pause/resume, ⏭ skip, and ⏹ stop buttons — no command needed
+- **Right-clicking a track inside a YouTube auto-mix** gives you a long URL with `list=RD...`. Pasting it into `/play` plays just that one video. Use `/playytmix` to load the whole mix
+- Every track auto-posts a **Now Playing** embed with ⏮ previous, ⏸ pause/resume, ⏭ skip, and ⏹ stop buttons — no command needed
 - If the bot is in multiple voice channels in your server, use `/leave #channel-name` to specify which one to disconnect
 - `/loop track` is great for repeating a single song; `/loop queue` cycles through your whole playlist
 - Queue positions shown in `/queue` are 1-based — use that number with `/remove`

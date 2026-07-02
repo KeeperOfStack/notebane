@@ -109,6 +109,39 @@ def looks_like_playlist(query: str) -> bool:
     return bool(_PLAYLIST_HINTS.search(query))
 
 
+# YouTube auto-mix / radio list prefixes that yt-dlp expands even when
+# noplaylist=True is set. When a URL contains both v= (a specific video)
+# and one of these list prefixes, the user almost certainly right-clicked
+# a video inside a mix — strip the list context so only that video plays.
+# Use /playytmix to intentionally load the full mix.
+_MIX_LIST_PREFIXES = re.compile(
+    r"[?&]list=(RD|RDMM|RDCLAK|RDAMVM)[A-Za-z0-9_-]*",
+    re.IGNORECASE,
+)
+_VIDEO_ID_PARAM = re.compile(r"[?&]v=([A-Za-z0-9_-]+)")
+
+
+def strip_mix_context(url: str) -> str:
+    """Strip YouTube auto-mix list context from a single-video URL.
+
+    If the URL contains both a video ID (v=...) and a radio/mix list
+    prefix (list=RD*, RDMM*, RDCLAK*, RDAMVM*), return a clean
+    watch?v=ID URL. All other URLs are returned unchanged.
+
+    This preserves normal playlist behaviour (list=PL*, list=OLAK*) and
+    leaves non-YouTube URLs, search terms, and pure playlist URLs alone.
+    """
+    if not _MIX_LIST_PREFIXES.search(url):
+        return url  # not a mix URL — pass through unchanged
+
+    m = _VIDEO_ID_PARAM.search(url)
+    if not m:
+        return url  # mix list but no v= — leave as-is (shouldn't happen in practice)
+
+    video_id = m.group(1)
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
     """Run yt-dlp synchronously (called in a thread executor).
 
