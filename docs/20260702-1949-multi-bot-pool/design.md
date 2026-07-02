@@ -83,10 +83,10 @@ environment:
 
 ## Phase Breakdown
 
-### Phase 1 — Env-var pool parser + BotManager scaffold
-- Parse all BOT_NN_TOKEN / BOT_NN_ID from `os.environ`
-- Build `BotManager` + `BotEntry` dataclasses (no Discord connection)
-- Unit tests: 1-bot, 3-bot, gaps, missing ID, empty pool
+### Phase 1 — Env-var pool parser + BotManager scaffold ✅
+- `src/notebane/bot_manager.py` — BotManager + BotEntry, fully offline
+- `tests/test_bot_manager.py` — 27 unit tests, all passing
+- Commit: 8d36159
 
 ### Phase 2 — Multi-client startup + graceful shutdown
 - Instantiate `discord.Client` per BotEntry
