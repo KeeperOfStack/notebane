@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 import time
@@ -49,72 +48,32 @@ async def _load_playlist_into_player(
     tracks: list[Track],
     playlist_name: str,
 ) -> None:
-    """Append tracks to the player queue. Records a mutation for /undo.
+    """Append tracks to the player queue as unresolved stubs. Records a mutation for /undo.
 
-    Re-resolves each track's webpage_url via yt-dlp in the background
-    (stream URLs from saved playlists may have expired). Uses the same
-    progressive-cursor pattern as _enqueue_playlist_bg so the first
-    track starts playing within ~1-2s.
+    Stubs are enqueued instantly (no yt-dlp calls). Stream URLs are resolved
+    JIT in the play loop just before each track plays.
     """
-    from notebane.cogs.music import MusicCog  # avoid circular at module level
     from notebane.restore_db import clear_snapshot as _clear_restore
+    from notebane.cookies import get_guild_cookiefile
 
     player.record_mutation()
     _clear_restore(player.guild_id, player.channel_id)
+    player._cookiefile = get_guild_cookiefile(player.guild_id)
 
-    text_channel = interaction.channel
+    # Build stubs from the saved Track objects (webpage_url is always stored)
+    for t in tracks:
+        stub = Track(
+            title=t.title,
+            url=t.webpage_url,        # placeholder — JIT resolve fills real stream URL
+            webpage_url=t.webpage_url,
+            duration=t.duration,
+            thumbnail=t.thumbnail,
+            requester=t.requester,
+            resolved=False,
+        )
+        player.queue.put_nowait(stub)
 
-    # Fire background resolve task
-    async def _bg_resolve() -> None:
-        from notebane.cookies import get_guild_cookiefile
-        cookiefile = get_guild_cookiefile(player.guild_id)
-
-        results: list[Track | None] = [None] * len(tracks)
-        cursor = 0
-        cursor_lock = asyncio.Lock()
-        sem = asyncio.Semaphore(1)
-        failed = 0
-
-        async def _resolve_one(idx: int, saved: Track) -> None:
-            nonlocal failed, cursor
-            async with sem:
-                try:
-                    resolved = await resolve(
-                        saved.webpage_url,
-                        requester=saved.requester,
-                        cookiefile=cookiefile,
-                    )
-                    results[idx] = resolved
-                except YTDLError:
-                    failed += 1
-                except Exception:
-                    log.exception("playlist load: failed to resolve %r", saved.webpage_url)
-                    failed += 1
-
-            async with cursor_lock:
-                while cursor < len(results) and results[cursor] is not None:
-                    await player.queue.put(results[cursor])  # type: ignore[arg-type]
-                    cursor += 1
-
-        await asyncio.gather(*(_resolve_one(i, t) for i, t in enumerate(tracks)))
-
-        # Sweep any missed tail
-        async with cursor_lock:
-            while cursor < len(results):
-                if results[cursor] is not None:
-                    await player.queue.put(results[cursor])  # type: ignore[arg-type]
-                cursor += 1
-
-        if isinstance(text_channel, discord.TextChannel):
-            loaded = len(tracks) - failed
-            msg = f"✅ **{playlist_name}** — {loaded} track(s) loaded"
-            if failed:
-                msg += f" ({failed} unavailable)"
-            await text_channel.send(msg)
-
-    task = asyncio.get_event_loop().create_task(_bg_resolve())
-    player._bg_tasks.add(task)
-    task.add_done_callback(player._bg_tasks.discard)
+    log.info("[guild=%d] Loaded %d stubs instantly for /loadlist '%s'", player.guild_id, len(tracks), playlist_name)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -571,16 +530,7 @@ class PlaylistCog(commands.Cog, name="Playlists"):
             await interaction.followup.send("❌ I'm not in a voice channel.", ephemeral=True)
             return
 
-        # If a background playlist loader is still running, wait for it to
-        # finish before snapshotting — otherwise we'd save only the tracks
-        # resolved so far (e.g. 10 out of 222).
-        if player._bg_tasks:
-            await interaction.followup.send(
-                "⏳ Still loading tracks into the queue — waiting for it to finish before saving…",
-                ephemeral=True,
-            )
-            await player.wait_for_bg_tasks()
-
+        # Stubs are enqueued instantly — no need to wait for background loaders.
         tracks = player.queue_list()
         if player.current:
             tracks = [player.current] + tracks
