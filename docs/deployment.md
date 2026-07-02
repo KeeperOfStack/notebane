@@ -63,6 +63,7 @@ docker pull ghcr.io/keeperofstack/notebane:latest
 services:
   notebane:
     image: ghcr.io/keeperofstack/notebane:latest
+    container_name: notebane
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: your_token_here
