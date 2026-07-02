@@ -32,12 +32,13 @@ class Track:
     """Represents a queued audio track."""
 
     title: str
-    url: str          # direct stream URL (from yt-dlp)
-    webpage_url: str  # human-facing URL (for embeds)
+    url: str          # direct stream URL when resolved; webpage_url placeholder when stub
+    webpage_url: str  # human-facing URL (always set)
     duration: int | None = None   # seconds; None for livestreams
     thumbnail: str | None = None
     requester: str = "unknown"
     http_headers: dict[str, str] | None = None  # headers yt-dlp says to send (User-Agent etc.)
+    resolved: bool = True  # False = stub; url is not yet a real stream URL
 
     def duration_fmt(self) -> str:
         """Return HH:MM:SS or MM:SS string, or '∞' for streams."""
@@ -46,6 +47,30 @@ class Track:
         m, s = divmod(self.duration, 60)
         h, m = divmod(m, 60)
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    @classmethod
+    def make_stub(cls, entry: dict, requester: str = "unknown") -> "Track":
+        """Build an unresolved Track from a yt-dlp flat playlist entry.
+
+        Uses only metadata available from flat extraction (no yt-dlp resolve call).
+        The real stream URL will be fetched JIT in the play loop before FFmpeg opens.
+        """
+        webpage_url = entry.get("webpage_url") or entry.get("url") or ""
+        title = entry.get("title") or entry.get("id") or "Unknown title"
+        duration = entry.get("duration")
+        thumbnail = (
+            entry.get("thumbnail")
+            or ((entry.get("thumbnails") or [{}])[-1].get("url"))
+        )
+        return cls(
+            title=title,
+            url=webpage_url,       # placeholder — overwritten by JIT resolve
+            webpage_url=webpage_url,
+            duration=duration,
+            thumbnail=thumbnail,
+            requester=requester,
+            resolved=False,
+        )
 
 
 # Callback signature: called when a new track starts playing
