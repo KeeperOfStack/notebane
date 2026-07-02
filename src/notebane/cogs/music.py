@@ -144,7 +144,8 @@ def _queue_embed(player: GuildPlayer, page: int = 1) -> discord.Embed:
         for i, t in enumerate(tracks[start:end], start=start + 1):
             # Truncate titles so the embed field never exceeds Discord's 1024-char limit
             title_safe = (t.title or "Unknown")[:60]
-            lines.append(f"`{i}.` [{title_safe}]({t.webpage_url}) `{t.duration_fmt()}` — *{t.requester}*")
+            stub_tag = "⟳ " if not t.resolved else ""
+            lines.append(f"`{i}.` {stub_tag}[{title_safe}]({t.webpage_url}) `{t.duration_fmt()}` — *{t.requester}*")
         embed.add_field(name=f"Up Next (page {page}/{total_pages})", value="\n".join(lines), inline=False)
 
     loop_tag = " • 🔁 Queue loop ON" if player.loop_queue else ""
