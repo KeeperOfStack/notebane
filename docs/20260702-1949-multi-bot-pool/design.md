@@ -134,17 +134,39 @@ environment:
 - `assign_bot()` returns `None` when all occupied
 - Handler checks `None` + `len(bots) >= 2` → all-bots-busy message
 
+### Phase 5 — All-bots-busy error + single-bot passthrough ✅
+- Single-bot (N=1) and guild-single-bot (container N>1, guild invited 1): never sends busy error
+- Guild N≥2 all occupied → exact `ALL_BUSY_MSG`, ephemeral, correct wording proven by test
+- 7 UX-guarantee tests | Commit: 65b5477
+
 ### Phase 6 — Docker Compose env schema + docs
 - `docker-compose.example.yml` with 1/2/3-bot commented slots
 - README updated
 - Existing `docker-compose.yml` gains commented-out BOT_02 / BOT_03 lines
 
+### Phase 6 — Docker Compose env schema + docs ✅
+- `docker-compose.yml` gains commented BOT_01/02/03 inline block
+- `docker-compose.example.yml` — single/2-bot/3-bot full examples + .env template
+- Commit: 65b5477
+
 ### Phase 7 — Integration tests + validation
 - Offline unit tests for all BotManager paths
 - Manual smoke-test checklist (single bot, two bots, all-busy scenario)
+
+### Phase 7 — Integration tests + validation ✅
+- 77 total tests passing across 5 test files
+- `docs/.../smoke-test-checklist.md` — 4 scenarios, step tables, log key
+- Commit: 65b5477
 
 ### Phase 8 — Per-guild bot pool filtering
 - Add `BotManager.bots_for_guild(guild_id)` — returns only bots whose client is a member of the guild
 - Update Phase 3 routing, Phase 5 all-busy + single-bot passthrough to use guild-filtered pool
 - Unit tests: all bots in guild, partial subset, no bots in guild edge case
 - Ensures a guild with 1 of 3 container bots invited behaves as a single-bot deployment
+
+### Phase 8 — Per-guild bot pool filtering ✅
+- `bots_for_guild()`, `guild_pool_is_single()`, `guild_pool_all_busy()`, `assign_bot_for_guild()`
+- `get_or_assign_bot_for_channel()` now guild-scoped
+- Routing single-bot passthrough uses guild_pool_is_single (guild-aware)
+- Startup safety + defensive fallback for guild with 0 invited bots
+- 18 guild-filtering tests | Commit: 65b5477
