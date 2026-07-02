@@ -114,8 +114,19 @@ environment:
 - If not → `assign_bot()` → join → delegate
 - If user not in VC → existing error
 
+### Phase 3 — Voice-channel affinity routing ✅  (also fulfils Phase 4)
+- `src/notebane/routing.py` (new) — `resolve_players_for_channel`, `get_players_for_channel`, `release_channel`, `get_all_players_for_guild`; single-bot always passthrough
+- `BotManager.get_or_assign_bot_for_channel()` added
+- `voice.py` `/join` routes via routing; `/leave` + auto-leave call `release_channel`
+- `music.py` `_ensure_player` + `_get_player` route via routing; `/stop` + NowPlayingView stop button call `release_channel`
+- 15 new tests (52 total) | Commit: c3e1ceb
 ### Phase 4 — Bot 1 priority assignment
 - `assign_bot()` sorted iteration (already guaranteed by Phase 1 sort)
+- Verify with unit test: Bot 1 picked first, Bot 2 only when Bot 1 is occupied
+
+### Phase 4 — Bot 1 priority assignment ✅
+- Fulfilled by BotManager.assign_bot() (bots sorted by number, Bot 1 = index 0).
+- Verified in Phase 1 tests + Phase 3 routing test `test_resolve_bot1_preferred_after_release`.
 - Verify with unit test: Bot 1 picked first, Bot 2 only when Bot 1 is occupied
 
 ### Phase 5 — All-bots-busy error + single-bot passthrough
