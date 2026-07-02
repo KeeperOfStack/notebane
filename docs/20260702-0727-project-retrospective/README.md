@@ -28,8 +28,8 @@ A lightweight, self-hosted Discord music bot with:
 
 | Phases | What shipped |
 |---|---|
-| 1–8 | Scaffold, voice, yt-dlp, FFmpeg, queue, Docker, GHCR |
-| 9 | Playlist hardening, Now Playing ⏸/⏭/⏹ buttons |
+| Phases 1–8 | Scaffold, voice, yt-dlp, FFmpeg, queue, Docker, GHCR |
+| 9 | Playlist hardening, Now Playing ⏮/⏸/⏭/⏹ buttons |
 | 10 | Per-guild YouTube auth (`/ytlogin`), Deno + yt-dlp-ejs solver |
 | 11–12 | Smart-cookie policy, playlist coverage measurement |
 | 13 | Single-URL fast path — 1 yt-dlp call instead of 2 |
@@ -40,6 +40,8 @@ A lightweight, self-hosted Discord music bot with:
 | — | JIT stub system — instant enqueue, resolve at play time |
 | — | `/previous` + ⏮ button with 20-track session history |
 | — | Deployment hardening — PUID/PGID, named volumes, health check fix |
+| — | YouTube mix handling — `strip_mix_context()`, `/playytmix`, `/playytmixnext` |
+| — | Undo message clarity — "Removed N tracks. Queue restored to M." |
 
 ---
 
@@ -82,6 +84,7 @@ A lightweight, self-hosted Discord music bot with:
 | yt-dlp clobbers cookiefile | Store original at `.orig.txt`; restore to `.txt` before each yt-dlp call |
 | "Sign in to confirm" not actionable | Pin to nightly yt-dlp — stable buries the real error |
 | Playlist coverage low | Use `youtubetab:skip=webpage` — hits internal API, ~2× coverage |
+| `list=RD*` URL loads entire mix in `/play` | Apply `strip_mix_context()` before routing — strips mix params when `v=` present; use `/playytmix` to load intentionally |
 
 ### Docker / Deployment
 | Pitfall | Fix |
@@ -99,6 +102,7 @@ A lightweight, self-hosted Discord music bot with:
 | Queue rebuild blocking | Drain with `get_nowait()` loop, then `put_nowait()` to refill |
 | Stale bg loaders after undo/redo | Cancel all `_bg_tasks` before replacing queue |
 | `_after_play` thread safety | Only `Event.set()` — no awaits, no queue ops from that callback |
+| Undo "X tracks restored" is misleading | Shows the restored snapshot size, not what was removed; show "Removed N, restored to M" |
 
 ### CI / Lint
 | Pitfall | Fix |

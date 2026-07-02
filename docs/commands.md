@@ -35,11 +35,11 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 | Command | Arguments | Description |
 |---|---|---|
 | `/queue` | `[page]` | Show the track queue, paginated at 10 tracks per page. Shows current track, upcoming tracks, and total count. Uses deferred response to avoid Discord's 3-second timeout. |
-| `/nowplaying` | — | Show what's currently playing with track title, requester, duration, and queue position. Each track also posts a **Now Playing** message automatically with ⏸/⏭/⏹ buttons for inline control. |
+| `/nowplaying` | — | Show what's currently playing with track title, requester, duration, and queue position. Each track also posts a **Now Playing** message automatically with ⏮/⏸/⏭/⏹ buttons for inline control. |
 | `/shuffle` | — | Shuffle all tracks in the queue randomly. The currently playing track is not affected. |
 | `/loop` | `track \| queue \| off` | Set loop mode. `track` repeats the current song, `queue` loops through all tracks, `off` disables looping. |
 | `/remove` | `position` | Remove a track from the queue by its position number (as shown in `/queue`). |
-| `/undo` | — | Undo the last change to the queue — restores it to how it was before the most recent add, remove, shuffle, or skip. |
+| `/undo` | — | Undo the last change to the queue. Shows how many tracks were removed and how many remain. Supports up to 10 levels of undo per session. |
 | `/redo` | — | Redo the last undone queue change. |
 | `/restore` | — | Restore your queue from before the bot stopped or you disconnected. Pulls from the last saved snapshot. |
 
