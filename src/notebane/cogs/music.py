@@ -750,6 +750,116 @@ class MusicCog(commands.Cog, name="Music"):
             else:
                 await interaction.edit_original_response(content="▶️ Starting playback…")
 
+    # ── /playytmixnext ────────────────────────────────────────────────────────
+
+    @app_commands.command(name="playytmixnext", description="Insert a full YouTube auto-mix to play after the current track.")
+    @app_commands.describe(query="YouTube mix/radio URL (the long link with list=RD... from right-clicking a track)")
+    async def playytmixnext(self, interaction: discord.Interaction, query: str) -> None:
+        """Intentionally insert a full YouTube auto-mix after the current track — bypasses mix-strip."""
+        t_start = time.perf_counter()
+        await interaction.response.defer()
+
+        player = await self._ensure_player(interaction)
+        if player is None:
+            return
+
+        cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+        player._cookiefile = cookiefile
+
+        await interaction.followup.send(f"🔍 Loading mix `{query}`…")
+
+        # No strip_mix_context — intentional full mix load.
+        if not looks_like_playlist(query):
+            try:
+                track = await resolve(query, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            except Exception as exc:
+                log.exception("Unexpected resolve error for %r", query)
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(str(exc), title="Unexpected Error"),
+                )
+                return
+
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            player.insert_next([track])
+            embed = discord.Embed(
+                title="▶ Up Next",
+                description=f"**[{track.title}]({track.webpage_url})**",
+                colour=discord.Colour.blurple(),
+            )
+            embed.add_field(name="Duration", value=track.duration_fmt(), inline=True)
+            embed.add_field(name="Requested by", value=track.requester, inline=True)
+            embed.set_footer(text="Inserted after the current track")
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            await interaction.edit_original_response(content=None, embed=embed)
+            return
+
+        try:
+            entries = await resolve_playlist(query, cookiefile=cookiefile)
+        except YTDLError as exc:
+            from notebane.metrics import record_ytdl_error
+            record_ytdl_error()
+            await interaction.edit_original_response(
+                content=None,
+                embed=err_embed(f"Could not load mix: `{query}`\n> {exc}", title="Not Found"),
+            )
+            return
+
+        if len(entries) > 1:
+            playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or "YouTube Mix"
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            count = self._enqueue_playlist_stubs(
+                player, entries, requester=interaction.user.display_name, insert_next=True
+            )
+            log.info("[guild=%d] /playytmixnext queued %d stubs at front", player.guild_id, count)
+            if count >= 200:
+                playlist_title += (
+                    "\n⚠️ **Large mix** — YouTube caps unauthenticated fetches at ~222 tracks. "
+                    "Run `/ytlogin` to unlock more."
+                )
+            await interaction.edit_original_response(
+                content=None,
+                embed=_playlist_queued_embed(playlist_title, count, interaction.user.display_name, next_up=True),
+            )
+        else:
+            entry = entries[0] if entries else None
+            url = (entry or {}).get("webpage_url") or (entry or {}).get("url") or query
+            try:
+                track = await resolve(url, requester=interaction.user.display_name, cookiefile=cookiefile)
+            except YTDLError as exc:
+                from notebane.metrics import record_ytdl_error
+                record_ytdl_error()
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=err_embed(f"Could not find: `{query}`\n> {exc}", title="Not Found"),
+                )
+                return
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            player.insert_next([track])
+            embed = discord.Embed(
+                title="▶ Up Next",
+                description=f"**[{track.title}]({track.webpage_url})**",
+                colour=discord.Colour.blurple(),
+            )
+            embed.add_field(name="Duration", value=track.duration_fmt(), inline=True)
+            embed.add_field(name="Requested by", value=track.requester, inline=True)
+            embed.set_footer(text="Mix inserted after the current track")
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            await interaction.edit_original_response(content=None, embed=embed)
+
     # ── /skip ─────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="skip", description="Skip the current track.")
