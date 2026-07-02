@@ -247,6 +247,32 @@ class MusicCog(commands.Cog, name="Music"):
 
         return player
 
+    # ── Shared: instant stub enqueue for playlists ────────────────────────────
+
+    def _enqueue_playlist_stubs(
+        self,
+        player: GuildPlayer,
+        entries: list[dict],
+        requester: str,
+        *,
+        insert_next: bool = False,
+    ) -> int:
+        """Dump all flat playlist entries as unresolved stub Tracks instantly.
+
+        No yt-dlp calls — titles and metadata come from the flat extract that
+        already ran. Stream URLs are resolved JIT in the play loop just before
+        each track plays. Returns the number of stubs enqueued.
+        """
+        stubs = [Track.make_stub(e, requester=requester) for e in entries]
+        if not stubs:
+            return 0
+        if insert_next:
+            player.insert_next(stubs)
+        else:
+            for stub in stubs:
+                player.queue.put_nowait(stub)
+        return len(stubs)
+
     # ── Shared: enqueue a playlist in background ───────────────────────────────
 
     async def _enqueue_playlist_bg(
@@ -395,6 +421,7 @@ class MusicCog(commands.Cog, name="Music"):
             return
 
         cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+        player._cookiefile = cookiefile  # forwarded to JIT resolve in play loop
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
@@ -444,24 +471,18 @@ class MusicCog(commands.Cog, name="Music"):
             return
 
         if len(entries) > 1:
-            # Playlist — acknowledge immediately, resolve in background
+            # Playlist — dump stubs instantly, JIT resolve happens in play loop
             playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or query
-            await interaction.edit_original_response(
-                content=None,
-                embed=_playlist_queued_embed(playlist_title, len(entries), interaction.user.display_name),
-            )
             player.record_mutation()
             _clear_restore_snapshot(player.guild_id, player.channel_id)
-            _task = asyncio.get_event_loop().create_task(
-                self._enqueue_playlist_bg(
-                    interaction, player, entries, playlist_title,
-                    requester=interaction.user.display_name,
-                    cookiefile=cookiefile,
-                    t_bg_start=t_start,
-                )
+            count = self._enqueue_playlist_stubs(
+                player, entries, requester=interaction.user.display_name
             )
-            player._bg_tasks.add(_task)
-            _task.add_done_callback(player._bg_tasks.discard)
+            log.info("[guild=%d] Queued %d stubs instantly for /play", player.guild_id, count)
+            await interaction.edit_original_response(
+                content=None,
+                embed=_playlist_queued_embed(playlist_title, count, interaction.user.display_name),
+            )
         else:
             # Playlist URL that resolved to a single entry — resolve fully.
             entry = entries[0] if entries else None
@@ -507,6 +528,7 @@ class MusicCog(commands.Cog, name="Music"):
             return
 
         cookiefile = get_guild_cookiefile(interaction.guild_id) if interaction.guild_id else None
+        player._cookiefile = cookiefile  # forwarded to JIT resolve in play loop
 
         await interaction.followup.send(f"🔍 Loading `{query}`…")
 
@@ -560,27 +582,20 @@ class MusicCog(commands.Cog, name="Music"):
             return
 
         if len(entries) > 1:
-            # Playlist — acknowledge immediately, resolve + insert in background
+            # Playlist — dump stubs instantly at front of queue, JIT resolve in play loop
             playlist_title = entries[0].get("playlist_title") or entries[0].get("playlist") or query
+            player.record_mutation()
+            _clear_restore_snapshot(player.guild_id, player.channel_id)
+            count = self._enqueue_playlist_stubs(
+                player, entries, requester=interaction.user.display_name, insert_next=True
+            )
+            log.info("[guild=%d] Queued %d stubs instantly for /playnext", player.guild_id, count)
             await interaction.edit_original_response(
                 content=None,
                 embed=_playlist_queued_embed(
-                    playlist_title, len(entries), interaction.user.display_name, next_up=True
+                    playlist_title, count, interaction.user.display_name, next_up=True
                 ),
             )
-            player.record_mutation()
-            _clear_restore_snapshot(player.guild_id, player.channel_id)
-            _task = asyncio.get_event_loop().create_task(
-                self._enqueue_playlist_bg(
-                    interaction, player, entries, playlist_title,
-                    requester=interaction.user.display_name,
-                    insert_next=True,
-                    cookiefile=cookiefile,
-                    t_bg_start=t_start,
-                )
-            )
-            player._bg_tasks.add(_task)
-            _task.add_done_callback(player._bg_tasks.discard)
         else:
             # Single track
             entry = entries[0] if entries else None
