@@ -28,11 +28,3 @@ services:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s     # allow graceful VC disconnect before SIGKILL
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          cpus: "0.25"
-          memory: 256M
