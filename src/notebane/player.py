@@ -219,6 +219,10 @@ class GuildPlayer:
 
             self.voice_client.play(source, after=self._after_play)
 
+            # Pre-resolve the next unresolved stub while this track plays,
+            # so the JIT resolve in the next loop iteration is often a no-op.
+            self._start_presolve()
+
             # Wait for this track to finish (or be stopped)
             await self._track_done.wait()
 
@@ -327,6 +331,56 @@ class GuildPlayer:
         pending = list(self._bg_tasks)
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+
+    def _start_presolve(self) -> None:
+        """Kick off a background resolve for the first unresolved stub in the queue.
+
+        Called once after playback starts on each track. Hides JIT latency by
+        resolving the next stub while the current track is still playing.
+        Only one presolve runs at a time.
+        """
+        # Don't double-spawn
+        if any(getattr(t, "_is_presolve", False) for t in self._bg_tasks):
+            return
+        dq = list(self.queue._queue)  # type: ignore[attr-defined]
+        for i, t in enumerate(dq):
+            if not t.resolved:
+                task = asyncio.get_event_loop().create_task(self._presolve_at(i, t))
+                task._is_presolve = True  # type: ignore[attr-defined]
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
+                return
+
+    async def _presolve_at(self, idx: int, stub: Track) -> None:
+        """Resolve `stub` and swap it in-place at queue position `idx`.
+
+        Safe to race with the play loop: if the loop JIT-resolves the same
+        track first, the swap is a no-op (resolved flag already True).
+        """
+        try:
+            from notebane.ytdl import resolve as ytdl_resolve
+            resolved = await ytdl_resolve(
+                stub.webpage_url,
+                requester=stub.requester,
+                cookiefile=self._cookiefile,
+            )
+            # Swap in-place only if the stub is still there and still unresolved
+            dq = self.queue._queue  # type: ignore[attr-defined]
+            dq_list = list(dq)
+            if (
+                idx < len(dq_list)
+                and dq_list[idx].webpage_url == stub.webpage_url
+                and not dq_list[idx].resolved
+            ):
+                dq_list[idx] = resolved
+                dq.clear()
+                dq.extend(dq_list)
+                log.debug("[guild=%d] pre-resolved %r at pos %d", self.guild_id, stub.title, idx)
+        except Exception:
+            log.debug(
+                "[guild=%d] presolve failed for %r — play loop will JIT resolve",
+                self.guild_id, stub.webpage_url,
+            )
 
     def insert_at(self, pos: int, track: Track) -> None:
         """Insert a single track at queue position `pos` (0 = front).
