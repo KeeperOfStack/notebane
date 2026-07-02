@@ -179,16 +179,6 @@ class AuthCog(commands.Cog, name="Auth"):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Validate and save any cookies.txt attached in a guild channel."""
-        # DEBUG — log every single message to find why listener isn't firing
-        log.info("on_message fired: guild=%s channel=%s author=%s attachments=%d",
-                 getattr(message.guild, 'name', None),
-                 getattr(message.channel, 'name', None),
-                 message.author,
-                 len(message.attachments))
-        for a in message.attachments:
-            log.info("  attachment: filename=%r content_type=%r size=%d",
-                     a.filename, a.content_type, a.size)
-
         if message.author.bot:
             return
         if not message.guild:
@@ -200,7 +190,6 @@ class AuthCog(commands.Cog, name="Auth"):
             a for a in message.attachments
             if a.filename.lower().endswith(".txt")
         ]
-        log.info("on_message: txt attachments=%s", [a.filename for a in txt_attachments])
         if not txt_attachments:
             return
 

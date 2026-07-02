@@ -44,8 +44,9 @@ ENV PYTHONUNBUFFERED=1 \
 RUN addgroup -S notebane && adduser -S notebane -G notebane
 USER notebane
 
-# Health check via /health endpoint (requires METRICS_PORT set; falls back gracefully)
+# Health check: if METRICS_PORT is set, poll /health; otherwise skip (exit 0)
+# The bot process itself keeps the container alive — if it crashes, Docker restarts it.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD sh -c 'PORT=${METRICS_PORT:-9090}; curl -fs http://127.0.0.1:$PORT/health > /dev/null 2>&1 || exit 0'
+    CMD sh -c '[ -z "${METRICS_PORT}" ] && exit 0; curl -fs http://127.0.0.1:${METRICS_PORT}/health > /dev/null 2>&1'
 
 ENTRYPOINT ["python", "-m", "notebane"]
