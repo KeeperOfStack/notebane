@@ -18,6 +18,11 @@ from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist, strip_mix_context
 from notebane.restore_db import clear_snapshot as _clear_restore_snapshot
+from notebane.routing import (
+    get_players_for_channel,
+    release_channel,
+    resolve_players_for_channel,
+)
 
 log = logging.getLogger("notebane.music")
 
@@ -89,6 +94,7 @@ class NowPlayingView(discord.ui.View):
         channel_id = self.player.channel_id
         await self.player.disconnect()
         self.players.remove(guild_id, channel_id)
+        release_channel(interaction.client, channel_id)
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
 
@@ -183,7 +189,21 @@ async def _get_player(
     if not interaction.guild:
         await _send_error("❌ Server-only command.")
         return None
-    player = players.get_any(interaction.guild.id)
+
+    # In multi-bot mode, route to the bot currently in the user's voice channel.
+    # Falls back to single-bot players.get_any if user isn't in a voice channel
+    # (that case is handled below with the existing "not in a voice channel" error).
+    bot = interaction.client
+    member = interaction.guild.get_member(interaction.user.id)
+    if member and member.voice and member.voice.channel:
+        routed = get_players_for_channel(bot, member.voice.channel.id)
+        player = routed.get(interaction.guild.id, member.voice.channel.id) if routed else None
+        if player is None:
+            # Fallback: user is in VC but no bot is there — use any active player
+            player = players.get_any(interaction.guild.id)
+    else:
+        player = players.get_any(interaction.guild.id)
+
     if player is None:
         await _send_error("❌ I'm not in a voice channel.")
         return None
@@ -230,7 +250,15 @@ class MusicCog(commands.Cog, name="Music"):
         if channel is None:
             return None
 
-        player = self.players.get(interaction.guild_id, channel.id)
+        # Multi-bot routing: resolve which bot's player manager owns this channel.
+        # Single-bot: returns self.players unchanged.
+        players = await resolve_players_for_channel(
+            self.bot, interaction, interaction.guild_id, channel.id
+        )
+        if players is None:
+            return None  # all bots busy — error already sent
+
+        player = players.get(interaction.guild_id, channel.id)
         if player is not None and not player.is_connected:
             # Stale player left in the manager after a disconnect (e.g. from /stop).
             # Remove it so we create a fresh one below.
@@ -238,11 +266,11 @@ class MusicCog(commands.Cog, name="Music"):
                 "[guild=%d channel=%d] evicting stale disconnected player",
                 interaction.guild_id, channel.id,
             )
-            self.players.remove(interaction.guild_id, channel.id)
+            players.remove(interaction.guild_id, channel.id)
             player = None
         if player is None:
             player = await _connect_to_channel(
-                interaction, channel, self.players, on_track_start=self._on_track_start
+                interaction, channel, players, on_track_start=self._on_track_start
             )
             if player is None:
                 return None
@@ -895,6 +923,7 @@ class MusicCog(commands.Cog, name="Music"):
         channel_id = player.channel_id
         await player.disconnect()
         self.players.remove(guild_id, channel_id)
+        release_channel(self.bot, channel_id)
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
     # ── /pause ────────────────────────────────────────────────────────────────

@@ -12,6 +12,11 @@ from discord.ext import commands
 if TYPE_CHECKING:
     from notebane.player import GuildPlayer, GuildPlayerManager
 
+from notebane.routing import (
+    release_channel,
+    resolve_players_for_channel,
+)
+
 log = logging.getLogger("notebane.voice")
 
 
@@ -146,7 +151,15 @@ class VoiceCog(commands.Cog, name="Voice"):
             if target is None:
                 return
 
-        player = await _connect_to_channel(interaction, target, self.players)
+        # Resolve which bot's player manager owns this channel (multi-bot routing).
+        # In single-bot mode this is a no-op returning self.players.
+        players = await resolve_players_for_channel(
+            self.bot, interaction, interaction.guild_id, target.id  # type: ignore[arg-type]
+        )
+        if players is None:
+            return  # all bots busy — error already sent
+
+        player = await _connect_to_channel(interaction, target, players)
         if player is None:
             return  # error already sent
 
@@ -205,6 +218,7 @@ class VoiceCog(commands.Cog, name="Voice"):
 
         await player.disconnect()
         self.players.remove(guild_id, channel_id)
+        release_channel(self.bot, channel_id)
 
         log.info("Left guild=%d channel=%s (%d)", guild_id, channel_name, channel_id)
         await interaction.followup.send(
@@ -271,6 +285,7 @@ class VoiceCog(commands.Cog, name="Voice"):
             )
             await player.disconnect()
             self.players.remove(guild.id, before.channel.id)
+            release_channel(self.bot, before.channel.id)
 
 
 async def setup(bot: commands.AutoShardedBot) -> None:

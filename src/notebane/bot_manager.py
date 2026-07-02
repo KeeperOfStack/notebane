@@ -192,3 +192,19 @@ class BotManager:
     def all_busy(self) -> bool:
         """True when every bot in the pool is occupied."""
         return all(not b.is_free for b in self._bots)
+
+    # ── Convenience routing ──────────────────────────────────────────────────
+
+    def get_or_assign_bot_for_channel(
+        self, guild_id: int, channel_id: int
+    ) -> BotEntry | None:
+        """Return the bot already in *channel_id*, or assign the next free one.
+
+        Returns None only when the channel has no bot AND all bots are busy.
+        guild_id is accepted now and will be used for per-guild filtering in
+        Phase 8 (bots_for_guild).
+        """
+        existing = self.get_bot_for_channel(channel_id)
+        if existing is not None:
+            return existing
+        return self.assign_bot(channel_id)
