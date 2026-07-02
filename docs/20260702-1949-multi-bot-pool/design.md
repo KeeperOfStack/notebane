@@ -25,6 +25,15 @@ BotManager
   .assign_bot(voice_channel) -> BotEntry | None  # Bot 1 priority
   .release_bot(voice_channel)
 ```
+  .bots_for_guild(guild_id) -> List[BotEntry]  # guild-filtered view (Phase 8)
+```
+
+`bots_for_guild(guild_id)` returns only the BotEntry items whose `client` is a
+member of that guild (i.e. `guild_id in [g.id for g in entry.client.guilds]`).
+All routing, all-busy checks, and is_single_bot use this filtered list — never
+the raw container pool.
+
+```
 
 `BotEntry`:
 ```
@@ -41,13 +50,14 @@ BotManager
 1. Is user in a voice channel?
    NO  → existing "not in a voice channel" error
    YES →
-     2. Is a bot already in that voice channel?
+     2. Resolve guild_pool = BotManager.bots_for_guild(guild_id)
+     3. Is a bot already in that voice channel?
         YES → route command to that bot
         NO  →
-          3. Is any bot free?
+          4. Is any bot in guild_pool free?
              YES → assign_bot() (Bot 1 priority) → join channel → route
              NO  →
-               4. N == 1?
+               5. len(guild_pool) == 1?
                   YES → existing "bot is busy" / generic error
                   NO  → "All bots are busy. Please ask an admin to add an
                          additional bot, or join a channel with a bot already in it."
@@ -55,7 +65,10 @@ BotManager
 
 ## Single-bot passthrough
 
-When `len(bots) == 1`, the BotManager short-circuits: every command goes directly to Bot 1, no assignment tracking runs, and all existing error messages are used verbatim.
+When `len(bots_for_guild(guild_id)) == 1`, the BotManager short-circuits for that guild:
+every command goes directly to the one bot, no assignment tracking runs, and all existing
+error messages are used verbatim. This applies even if the container holds more bots —
+a guild that has only invited one bot always sees single-bot behaviour.
 
 ## Bot 1 priority
 
@@ -117,3 +130,9 @@ environment:
 ### Phase 7 — Integration tests + validation
 - Offline unit tests for all BotManager paths
 - Manual smoke-test checklist (single bot, two bots, all-busy scenario)
+
+### Phase 8 — Per-guild bot pool filtering
+- Add `BotManager.bots_for_guild(guild_id)` — returns only bots whose client is a member of the guild
+- Update Phase 3 routing, Phase 5 all-busy + single-bot passthrough to use guild-filtered pool
+- Unit tests: all bots in guild, partial subset, no bots in guild edge case
+- Ensures a guild with 1 of 3 container bots invited behaves as a single-bot deployment
