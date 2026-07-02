@@ -100,6 +100,7 @@ class GuildPlayer:
         self.loop_queue = False
         self._on_track_start = on_track_start  # called with (player, track) on each start
         self._bg_tasks: set[asyncio.Task] = set()  # background enqueue tasks — cancelled on stop/disconnect
+        self._cookiefile: str | None = None  # set by music cog; forwarded to JIT resolve
 
         # Undo/redo stacks — in-memory, session-scoped (cleared on bot restart by design)
         self._undo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
@@ -155,6 +156,26 @@ class GuildPlayer:
 
             self.current = track
             self._track_done.clear()
+
+            # JIT-resolve stub tracks: fetch the real stream URL now, just
+            # before we hand it to FFmpeg. Stubs are created during instant
+            # playlist loading (flat extract only — no per-track yt-dlp call).
+            if not track.resolved:
+                try:
+                    from notebane.ytdl import resolve as ytdl_resolve
+                    track = await ytdl_resolve(
+                        track.webpage_url,
+                        requester=track.requester,
+                        cookiefile=self._cookiefile,
+                    )
+                    self.current = track
+                except Exception:
+                    log.exception(
+                        "[guild=%d] JIT resolve failed for %r — skipping track",
+                        self.guild_id, track.webpage_url,
+                    )
+                    self.current = None
+                    continue
 
             log.info(
                 "[guild=%d channel=%d] playing: %s (req: %s)",
