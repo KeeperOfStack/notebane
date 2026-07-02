@@ -8,9 +8,8 @@ Three deployment methods, ordered from simplest to most configurable.
 
 Before deploying you need:
 
-1. **A Discord bot token** — from [discord.com/developers/applications](https://discord.com/developers/applications) → your app → **Bot** tab → **Reset Token**
-2. **Your Application ID** — same page → **General Information** → Application ID
-3. **Docker** installed on your host
+1. **A Discord bot token and Application ID** — if you haven't created a bot yet, follow the [Create Your Own Bot](create-your-bot.md) guide first — it takes about 5 minutes.
+2. **Docker** installed on your host
 
 ---
 

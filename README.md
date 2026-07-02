@@ -25,6 +25,7 @@
 
 ## 📖 Documentation
 
+- [🤖 Create Your Own Bot](docs/create-your-bot.md) — step-by-step: create a Discord app, get your token, and invite it to your servers
 - [🚀 Deployment Guide](docs/deployment.md) — Docker run, Portainer, and Compose setup
 - [📋 Command Reference](docs/commands.md) — all slash commands and what they do
 - [🏛️ Design & Architecture](docs/notebane/design.md) — full design, phase breakdown, internals
