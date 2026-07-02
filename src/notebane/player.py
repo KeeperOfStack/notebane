@@ -106,6 +106,10 @@ class GuildPlayer:
         self._undo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
         self._redo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
 
+        # Playback history — tracks appended as they finish; used by previous()
+        self._history: deque[Track] = deque(maxlen=20)
+        self._going_previous: bool = False  # signal: skip loop/history logic on this stop
+
     # ── Properties ────────────────────────────────────────────────────────────
 
     @property
@@ -226,6 +230,17 @@ class GuildPlayer:
             # Wait for this track to finish (or be stopped)
             await self._track_done.wait()
 
+            # If previous() triggered this stop, skip all loop/history logic —
+            # the queue has already been rebuilt with the previous track at front.
+            if self._going_previous:
+                self._going_previous = False
+                self.current = None
+                continue
+
+            # Record finished track in history (for /previous)
+            if track is not None:
+                self._history.append(track)
+
             # Loop-track: re-queue same track at front
             if self.loop_track and self.current is not None:
                 await self.queue.put(track)
@@ -241,6 +256,35 @@ class GuildPlayer:
         """Skip the current track."""
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()   # triggers _after_play → _track_done.set()
+
+    async def previous(self) -> Track | None:
+        """Go back to the previous track.
+
+        Pops the last entry from history, places it at the front of the queue
+        (followed by the current track, then the existing queue), sets the
+        _going_previous flag so the play loop skips its normal history/loop
+        bookkeeping on this stop, then stops the current track.
+
+        Returns the track that will play next, or None if history is empty.
+        """
+        if not self._history:
+            return None
+
+        prev_track = self._history.pop()
+
+        # Rebuild queue: [prev, current, ...rest]
+        rest = self.queue_list()
+        new_queue: list[Track] = [prev_track]
+        if self.current is not None:
+            new_queue.append(self.current)
+        new_queue.extend(rest)
+        self._replace_queue(new_queue)
+
+        self._going_previous = True
+        if self.voice_client.is_playing() or self.voice_client.is_paused():
+            self.voice_client.stop()  # triggers _after_play → _track_done.set()
+
+        return prev_track
 
     def pause(self) -> bool:
         """Pause playback. Returns True if paused, False if nothing was playing."""

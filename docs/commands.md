@@ -21,6 +21,7 @@ All commands are Discord slash commands. Type `/` in any channel to see them wit
 | `/play` | `query` | Play a song or playlist, or add to the queue. Accepts YouTube URLs, playlist URLs, SoundCloud, Bandcamp, or plain search terms. Auto-joins your VC. For playlists, tracks are added in order — playback starts immediately while the rest load in the background. Uses yt-dlp's internal API to maximise playlist coverage without authentication. |
 | `/playnext` | `query` | Insert a song or playlist to play immediately after the current track. For playlists, the full playlist is inserted in order before whatever was next in the queue. |
 | `/skip` | — | Skip the current track and advance to the next one in the queue. |
+| `/previous` | — | Go back to the previous track. Replays the last track that finished. History holds up to 20 tracks per session. |
 | `/stop` | — | Stop playback and clear the entire queue. Bot stays in the channel. |
 | `/pause` | — | Pause the current track. |
 | `/resume` | — | Resume a paused track. |

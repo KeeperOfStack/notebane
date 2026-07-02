@@ -1,4 +1,4 @@
-"""Music cog — /play, /skip, /stop, /pause, /resume, /shuffle, /loop, /nowplaying, /queue, /remove."""
+"""Music cog — /play, /playnext, /skip, /previous, /stop, /pause, /resume, /shuffle, /loop, /nowplaying, /queue, /remove, /undo, /redo, /restore."""
 
 from __future__ import annotations
 
@@ -49,6 +49,14 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=None)
         self.player = player
         self.players = players
+
+    @discord.ui.button(emoji="⏮", style=discord.ButtonStyle.secondary, custom_id="np_previous")
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        prev = await self.player.previous()
+        if prev is None:
+            await interaction.response.send_message("❌ Nothing in history to go back to.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⏮ Going back to **{prev.title}**.", ephemeral=True)
 
     @discord.ui.button(emoji="⏸", style=discord.ButtonStyle.secondary, custom_id="np_pause_resume")
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -644,6 +652,19 @@ class MusicCog(commands.Cog, name="Music"):
         title = player.current.title if player.current else "current track"
         await player.skip()
         await interaction.response.send_message(f"⏭ Skipped **{title}**.", ephemeral=True)
+
+    # ── /previous ─────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="previous", description="Go back to the previous track.")
+    async def previous(self, interaction: discord.Interaction) -> None:
+        player = await _get_player(interaction, self.players, require_playing=True)
+        if player is None:
+            return
+        prev = await player.previous()
+        if prev is None:
+            await interaction.response.send_message("❌ Nothing in history to go back to.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⏮ Going back to **{prev.title}**.", ephemeral=True)
 
     # ── /stop ─────────────────────────────────────────────────────────────────
 
