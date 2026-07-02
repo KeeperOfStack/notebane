@@ -1,0 +1,83 @@
+# Notebane — example Docker Compose configurations
+#
+# This file documents three common setups.  Copy the environment block that
+# matches your needs into your working docker-compose.yml.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# MULTI-BOT OVERVIEW
+# ─────────────────────────────────────────────────────────────────────────────
+# Add BOT_NN_TOKEN / BOT_NN_ID pairs for as many bots as you need.
+# A single container hosts them all and load-balances across voice channels.
+#
+# Key rules:
+#   • BOT_01 is the "favourite" — it claims the first voice channel every time.
+#   • Each guild sees only the bots that have been invited to it.
+#     (Container has 3 bots, guild invited 2 → guild has a 2-bot pool.)
+#   • All bots in the guild pool busy → user sees:
+#       "All bots are busy. Please ask an admin to add an additional bot,
+#        or join a channel that already has a bot in it."
+#   • Guild with 1 invited bot → identical UX to single-bot mode.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP A — single bot (legacy, fully backward-compatible)
+# ─────────────────────────────────────────────────────────────────────────────
+# .env contains:
+#   DISCORD_TOKEN=your-bot-token
+#   APPLICATION_ID=your-app-id
+
+services:
+  notebane:
+    build: .
+    image: ghcr.io/keeperofstack/notebane:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./cookies:/cookies
+      - ./data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP B — two bots (recommended starting point for multi-VC servers)
+# Replace the env_file block above with this environment block:
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#    environment:
+#      # Bot 1 — favourite; always claims the first voice channel
+#      - BOT_01_TOKEN=${BOT_01_TOKEN}
+#      - BOT_01_ID=${BOT_01_ID}
+#      # Bot 2 — overflow when Bot 1 is occupied
+#      - BOT_02_TOKEN=${BOT_02_TOKEN}
+#      - BOT_02_ID=${BOT_02_ID}
+#      - LOG_LEVEL=INFO
+#      # - YTDL_COOKIEFILE=/cookies/cookies.txt
+#      # - METRICS_PORT=9090
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP C — three bots (large servers with many simultaneous voice channels)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#    environment:
+#      - BOT_01_TOKEN=${BOT_01_TOKEN}
+#      - BOT_01_ID=${BOT_01_ID}
+#      - BOT_02_TOKEN=${BOT_02_TOKEN}
+#      - BOT_02_ID=${BOT_02_ID}
+#      - BOT_03_TOKEN=${BOT_03_TOKEN}
+#      - BOT_03_ID=${BOT_03_ID}
+#      - LOG_LEVEL=INFO
+
+# ─────────────────────────────────────────────────────────────────────────────
+# .env template for multi-bot setups — copy to .env and fill in values
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#   BOT_01_TOKEN=          # Discord bot token for Bot 1
+#   BOT_01_ID=             # Discord application/bot user ID for Bot 1
+#   BOT_02_TOKEN=          # Bot 2 token (remove if only using one bot)
+#   BOT_02_ID=             # Bot 2 application ID
+#   BOT_03_TOKEN=          # Bot 3 token (remove if only using two bots)
+#   BOT_03_ID=             # Bot 3 application ID
+#   LOG_LEVEL=INFO

@@ -93,7 +93,12 @@ async def resolve_players_for_channel(
     Sends an ephemeral error and returns None on failure.
     """
     mgr = bot.bot_manager
-    if mgr is None or mgr.is_single_bot:
+    if mgr is None or mgr.guild_pool_is_single(guild_id):
+        # Single-bot mode OR this guild only has one bot invited — use the
+        # first bot in the guild pool (which is bot.players for Bot 1).
+        guild_pool = mgr.bots_for_guild(guild_id) if mgr is not None else []
+        if guild_pool and guild_pool[0].client is not None:
+            return guild_pool[0].client.players  # type: ignore[union-attr]
         return bot.players
 
     entry = mgr.get_or_assign_bot_for_channel(guild_id, channel_id)

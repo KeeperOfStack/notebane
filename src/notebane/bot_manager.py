@@ -207,4 +207,74 @@ class BotManager:
         existing = self.get_bot_for_channel(channel_id)
         if existing is not None:
             return existing
-        return self.assign_bot(channel_id)
+        return self.assign_bot_for_guild(guild_id, channel_id)
+
+    # ── Per-guild filtering (Phase 8) ────────────────────────────────────────
+
+    def bots_for_guild(self, guild_id: int) -> list[BotEntry]:
+        """Return only the bots that are members of *guild_id*.
+
+        Membership is determined at runtime via ``entry.client.guilds`` —
+        the list of discord.Guild objects the client has joined.  Bots whose
+        client is None (not yet wired) or whose client has no guilds attribute
+        are excluded gracefully.
+
+        If no clients have been wired yet (startup), returns the full raw pool
+        so the caller always gets a non-empty list.  This avoids a chicken-
+        and-egg problem during the brief window between process start and the
+        first on_ready firing.
+        """
+        if not self._bots:
+            return []
+
+        # Check if any entry has a wired client with guild membership data.
+        # If not (startup / test), fall back to the full pool.
+        any_wired = any(
+            entry.client is not None and hasattr(entry.client, "guilds")
+            for entry in self._bots
+        )
+        if not any_wired:
+            return list(self._bots)
+
+        filtered = [
+            entry for entry in self._bots
+            if (
+                entry.client is not None
+                and hasattr(entry.client, "guilds")
+                and any(g.id == guild_id for g in entry.client.guilds)
+            )
+        ]
+        # Defensive: if filtering yields nothing (e.g. no bot has been added to
+        # this guild yet), fall back to full pool so the user gets a meaningful
+        # error rather than a silent failure.
+        return filtered if filtered else list(self._bots)
+
+    def guild_pool_is_single(self, guild_id: int) -> bool:
+        """True when this guild's effective pool has exactly one bot."""
+        return len(self.bots_for_guild(guild_id)) == 1
+
+    def guild_pool_all_busy(self, guild_id: int) -> bool:
+        """True when every bot in this guild's effective pool is occupied."""
+        pool = self.bots_for_guild(guild_id)
+        return bool(pool) and all(not b.is_free for b in pool)
+
+    def assign_bot_for_guild(self, guild_id: int, channel_id: int) -> BotEntry | None:
+        """Assign the next free bot from this guild's pool to *channel_id*.
+
+        Bot 1 priority is preserved — the guild pool is already sorted by
+        number (bots_for_guild filters but does not re-sort).
+        Returns None if all bots in the guild pool are occupied.
+        """
+        for entry in self.bots_for_guild(guild_id):
+            if entry.is_free:
+                entry.voice_channel_id = channel_id
+                log.info(
+                    "Assigned Bot %d to voice channel %d (guild %d)",
+                    entry.number, channel_id, guild_id,
+                )
+                return entry
+        log.warning(
+            "All bots in guild %d pool are occupied — cannot assign to channel %d",
+            guild_id, channel_id,
+        )
+        return None

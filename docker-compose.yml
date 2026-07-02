@@ -5,6 +5,22 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # ── Multi-bot pool ────────────────────────────────────────────────────────
+    # To run multiple bots in parallel, replace env_file with an environment
+    # block.  Add as many BOT_NN_TOKEN / BOT_NN_ID pairs as you need.
+    # Bot 1 is always preferred and will claim the first voice channel.
+    # Each guild only sees the bots that have been invited to it.
+    # See docker-compose.example.yml for full examples.
+    #
+    # environment:
+    #   - BOT_01_TOKEN=${BOT_01_TOKEN}
+    #   - BOT_01_ID=${BOT_01_ID}
+    #   - BOT_02_TOKEN=${BOT_02_TOKEN}   # remove if only using one bot
+    #   - BOT_02_ID=${BOT_02_ID}
+    #   - BOT_03_TOKEN=${BOT_03_TOKEN}   # remove if only using two bots
+    #   - BOT_03_ID=${BOT_03_ID}
+    #   - LOG_LEVEL=INFO
+    # ─────────────────────────────────────────────────────────────────────────
     # Uncomment to expose Prometheus /metrics endpoint (set METRICS_PORT in .env too)
     # ports:
     #   - "9090:9090"
