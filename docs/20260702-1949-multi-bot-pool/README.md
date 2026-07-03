@@ -1,7 +1,7 @@
 # Multi-Bot Pool — Overview
 
-**Status:** Planning  
-**Branch:** `feature/multi-bot-pool` (not yet created)
+**Status:** ✅ All 8 phases complete + post-launch bug fixes  
+**Branch:** `main` (merged 2026-07-02)
 
 ## What this adds
 
