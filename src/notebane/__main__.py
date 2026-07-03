@@ -209,6 +209,24 @@ class Notebane(commands.AutoShardedBot):
                         "Bot %d: failed to guild-sync to %s (%d): %s",
                         self._bot_number, guild.name, guild.id, exc,
                     )
+        else:
+            # Pool bots: actively wipe any commands previously registered
+            # (e.g. before this guard was added). Syncing an empty tree
+            # removes all guild-scoped slash commands for this bot client.
+            self.tree.clear_commands(guild=None)  # clear global tree
+            for guild in self.guilds:
+                try:
+                    self.tree.clear_commands(guild=guild)
+                    await self.tree.sync(guild=guild)
+                    log.info(
+                        "Bot %d: cleared commands from %s (%d)",
+                        self._bot_number, guild.name, guild.id,
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Bot %d: failed to clear commands from %s (%d): %s",
+                        self._bot_number, guild.name, guild.id, exc,
+                    )
 
         log.info(
             "Bot %d ready | user=%s | guilds=%d | shards=%d",
