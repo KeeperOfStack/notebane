@@ -13,6 +13,21 @@ Before deploying you need:
 
 ---
 
+## Single Bot vs. Bot Pool
+
+Notebane supports running **1 to 5 bots in parallel** inside a single container. Each voice channel in a guild gets its own bot, enabling simultaneous playback in multiple channels.
+
+| Mode | When to use |
+|---|---|
+| **Single bot** | One voice channel at a time per server — the classic setup |
+| **Bot pool (2-5)** | Multiple voice channels playing simultaneously in the same server |
+
+In pool mode, **only Bot 1 registers slash commands** — pool bots (2-5) are silent audio workers. Users interact with `/play`, `/skip`, etc. as normal; the router automatically assigns the right bot behind the scenes.
+
+> **Adding bots to a server:** Each bot in the pool needs to be individually invited to the server via its own OAuth2 link. See the [Adding Pool Bots to Your Server](#adding-pool-bots-to-your-server) section below.
+
+---
+
 ## Volumes
 
 Notebane needs two persistent volumes — one for the database (queue snapshots + user playlists) and one for YouTube cookies uploaded via `/ytlogin`. Both survive container restarts and redeployments.
@@ -71,6 +86,23 @@ docker run -d \
 
 > Set `PUID` and `PGID` to your host user's IDs. Run `id -u` and `id -g` to find them. Defaults (`1000`/`1000`) work for most single-user Linux setups.
 
+**Running a bot pool with docker run:** Add each bot as an additional `-e` pair:
+
+```bash
+docker run -d \
+  --name notebane \
+  --restart unless-stopped \
+  -e BOT_01_TOKEN=notebane_token \
+  -e BOT_01_ID=notebane_app_id \
+  -e BOT_02_TOKEN=maestro_token \
+  -e BOT_02_ID=maestro_app_id \
+  -e BOT_03_TOKEN=cadenza_token \
+  -e BOT_03_ID=cadenza_app_id \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  ...
+```
+
 ### Verify it's running
 
 ```bash
@@ -79,7 +111,8 @@ docker logs notebane --tail=20
 
 You should see:
 ```
-{"level": "INFO", "msg": "Notebane ready | ..."}
+{"level": "INFO", "msg": "BotManager initialised with N bot(s): [1, 2, ...]"}
+{"level": "INFO", "msg": "Bot 1 ready | user=Notebane#2678 | guilds=... | shards=1"}
 ```
 
 ### Updating
@@ -102,6 +135,8 @@ docker pull ghcr.io/keeperofstack/notebane:latest
 
 ### 3. Paste the following into the Web Editor:
 
+**Single bot:**
+
 ```yaml
 services:
   notebane:
@@ -111,6 +146,43 @@ services:
     environment:
       DISCORD_TOKEN: your_token_here
       APPLICATION_ID: your_application_id_here
+      PUID: 1000
+      PGID: 1000
+      LOG_FORMAT: json
+    volumes:
+      - notebane_cookies:/cookies
+      - notebane_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 30s
+
+volumes:
+  notebane_cookies:
+  notebane_data:
+```
+
+**Bot pool (example with 5 bots):**
+
+```yaml
+services:
+  notebane:
+    image: ghcr.io/keeperofstack/notebane:latest
+    container_name: notebane
+    restart: unless-stopped
+    environment:
+      BOT_01_TOKEN: notebane_token_here
+      BOT_01_ID: notebane_app_id_here
+      BOT_02_TOKEN: maestro_token_here
+      BOT_02_ID: maestro_app_id_here
+      BOT_03_TOKEN: cadenza_token_here
+      BOT_03_ID: cadenza_app_id_here
+      BOT_04_TOKEN: capriccio_token_here
+      BOT_04_ID: capriccio_app_id_here
+      BOT_05_TOKEN: calypso_token_here
+      BOT_05_ID: calypso_app_id_here
       PUID: 1000
       PGID: 1000
       LOG_FORMAT: json
@@ -159,7 +231,7 @@ cd notebane
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your values:
+**Single bot** — edit `.env` and fill in:
 
 ```env
 DISCORD_TOKEN=your_token_here
@@ -169,8 +241,29 @@ APPLICATION_ID=your_application_id_here
 PUID=1000
 PGID=1000
 LOG_LEVEL=INFO
-# METRICS_PORT=9090
 ```
+
+**Bot pool** — use numbered pairs instead:
+
+```env
+BOT_01_TOKEN=notebane_token_here
+BOT_01_ID=notebane_app_id_here
+BOT_02_TOKEN=maestro_token_here
+BOT_02_ID=maestro_app_id_here
+BOT_03_TOKEN=cadenza_token_here
+BOT_03_ID=cadenza_app_id_here
+BOT_04_TOKEN=capriccio_token_here
+BOT_04_ID=capriccio_app_id_here
+BOT_05_TOKEN=calypso_token_here
+BOT_05_ID=calypso_app_id_here
+
+# Optional
+PUID=1000
+PGID=1000
+LOG_LEVEL=INFO
+```
+
+> You can run any number of bots from 1 to 5. Just include the pairs you need — gaps are skipped automatically.
 
 ### 3. Start the container
 
@@ -195,12 +288,38 @@ docker compose -f docker-compose.prod.yml up -d --force-recreate
 
 ---
 
+## Adding Pool Bots to Your Server
+
+Each bot in the pool is a separate Discord application and must be invited to your server individually. Without this, the container will start all bots but only the ones in your server will handle commands.
+
+**The easiest way** is to use the official invite page at [keeperofstack.github.io/notebane](https://keeperofstack.github.io/notebane/) — enter the invite password and you'll see invite links for all 5 bots in order.
+
+**What each bot does:**
+
+| Bot | Role |
+|---|---|
+| **Notebane** (Bot 1) | Primary — registers slash commands, handles all user interaction |
+| **Maestro** (Bot 2) | Audio worker — joins a second voice channel when Bot 1 is busy |
+| **Cadenza** (Bot 3) | Audio worker — joins a third voice channel |
+| **Capriccio** (Bot 4) | Audio worker — joins a fourth voice channel |
+| **Calypso** (Bot 5) | Audio worker — joins a fifth voice channel |
+
+You only need to invite as many bots as you want simultaneous voice channels. Inviting just Notebane gives you classic single-bot behaviour.
+
+> **Permissions required for each bot:** `Connect`, `Speak`, `View Channels`, `Send Messages`, `Embed Links`, `Read Message History`, `Use Application Commands`.
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DISCORD_TOKEN` | ✅ | — | Bot token from Discord Developer Portal |
-| `APPLICATION_ID` | ✅ | — | Application ID from Discord Developer Portal |
+| `DISCORD_TOKEN` | ✅ (single-bot) | — | Legacy single-bot token. Use `BOT_01_TOKEN` instead for pool deployments |
+| `APPLICATION_ID` | ✅ (single-bot) | — | Legacy single-bot application ID |
+| `BOT_01_TOKEN` | ✅ (pool) | — | Token for Bot 1 (Notebane) |
+| `BOT_01_ID` | ✅ (pool) | — | Application ID for Bot 1 |
+| `BOT_02_TOKEN` … `BOT_05_TOKEN` | ❌ | — | Tokens for pool bots 2-5 |
+| `BOT_02_ID` … `BOT_05_ID` | ❌ | — | Application IDs for pool bots 2-5 |
 | `PUID` | ❌ | `1000` | Host user ID to run as. Run `id -u` on your host to find it |
 | `PGID` | ❌ | `1000` | Host group ID to run as. Run `id -g` on your host to find it |
 | `LOG_LEVEL` | ❌ | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) |
