@@ -2,58 +2,167 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Add Notebane</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add a Notebane Bot</title>
   <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column;
-           align-items: center; justify-content: center; height: 100vh;
-           background: #1a1a2e; color: #fff; margin: 0; }
-    h1 { margin-bottom: 8px; }
-    p { color: #aaa; margin-bottom: 24px; }
-    input { padding: 12px 16px; border-radius: 8px; border: none;
-            font-size: 16px; width: 280px; margin-bottom: 12px; }
-    button { padding: 12px 32px; background: #5865f2; color: white;
-             border: none; border-radius: 8px; font-size: 16px;
-             cursor: pointer; width: 312px; }
-    button:hover { background: #4752c4; }
-    #msg { margin-top: 16px; color: #ff6b6b; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: #1a1a2e;
+      color: #fff;
+      margin: 0;
+      padding: 24px;
+    }
+
+    /* ── Auth screen ── */
+    #auth-screen { display: flex; flex-direction: column; align-items: center; }
+    #auth-screen h1 { margin-bottom: 8px; font-size: 1.8rem; }
+    #auth-screen p { color: #aaa; margin-bottom: 24px; text-align: center; }
+    input[type="password"] {
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: none;
+      font-size: 16px;
+      width: 280px;
+      margin-bottom: 12px;
+      background: #2a2a3e;
+      color: #fff;
+      outline: none;
+    }
+    input[type="password"]:focus { box-shadow: 0 0 0 2px #5865f2; }
+    #auth-btn {
+      padding: 12px 32px;
+      background: #5865f2;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 312px;
+      transition: background 0.15s;
+    }
+    #auth-btn:hover { background: #4752c4; }
+    #auth-btn:disabled { background: #3a3a5a; cursor: not-allowed; }
+    #msg { margin-top: 16px; color: #ff6b6b; min-height: 20px; }
+
+    /* ── Bot list screen ── */
+    #bot-screen { display: none; flex-direction: column; align-items: center; width: 100%; max-width: 420px; }
+    #bot-screen h1 { margin-bottom: 8px; font-size: 1.8rem; }
+    #bot-screen p { color: #aaa; margin-bottom: 28px; text-align: center; }
+    .bot-list { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+    .bot-btn {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: #2a2a3e;
+      border: 1px solid #3a3a5a;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 16px;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+      cursor: pointer;
+    }
+    .bot-btn:hover { background: #33334e; border-color: #5865f2; }
+    .bot-btn .icon { font-size: 22px; }
+    .bot-btn .label { font-weight: 600; }
+    .bot-btn .sublabel { font-size: 13px; color: #888; margin-left: auto; }
   </style>
 </head>
 <body>
-  <h1>🎵 Add Notebane</h1>
-  <p>Enter the invite password to add the bot to your server.</p>
-  <input type="password" id="pw" placeholder="Password" />
-  <button onclick="submit()">Add to Discord</button>
-  <div id="msg"></div>
+
+  <!-- Step 1: Password gate -->
+  <div id="auth-screen">
+    <h1>🎵 Notebane</h1>
+    <p>Enter the invite password to add a bot to your server.</p>
+    <input type="password" id="pw" placeholder="Password" autocomplete="off" />
+    <button id="auth-btn" onclick="doAuth()">Continue</button>
+    <div id="msg"></div>
+  </div>
+
+  <!-- Step 2: Bot selection (only populated + shown after valid auth) -->
+  <div id="bot-screen">
+    <h1>🎵 Choose a Bot</h1>
+    <p>Select which Notebane bot you'd like to add to your server.</p>
+    <div class="bot-list" id="bot-list"></div>
+  </div>
 
   <script>
     const WORKER_URL = 'https://notebane.nyxcircuit.workers.dev';
 
-    async function submit() {
-      const password = document.getElementById('pw').value;
-      const msg = document.getElementById('msg');
-      msg.textContent = 'Checking...';
+    // Bot display config — order and labels only, no URLs here
+    const BOT_META = [
+      { label: 'Add Notebane',   sub: 'Primary',  icon: '🎵' },
+      { label: 'Add Maestro',    sub: 'Bot 2',     icon: '🎶' },
+      { label: 'Add Cadenza',    sub: 'Bot 3',     icon: '🎸' },
+      { label: 'Add Capriccio', sub: 'Bot 4',     icon: '🥁' },
+      { label: 'Add Calypso',   sub: 'Bot 5',     icon: '🎺' },
+    ];
+
+    async function doAuth() {
+      const password = document.getElementById('pw').value.trim();
+      const msg      = document.getElementById('msg');
+      const btn      = document.getElementById('auth-btn');
+
+      if (!password) { msg.textContent = '❌ Please enter a password.'; return; }
+
+      msg.textContent = 'Checking…';
+      btn.disabled = true;
 
       try {
-        const res = await fetch(WORKER_URL, {
+        const res  = await fetch(WORKER_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password })
+          body: JSON.stringify({ password }),
         });
 
         const data = await res.json();
 
-        if (res.ok && data.url) {
-          window.location.href = data.url;
+        if (res.ok && Array.isArray(data.bots) && data.bots.length > 0) {
+          showBots(data.bots);
         } else {
           msg.textContent = '❌ Incorrect password.';
+          btn.disabled = false;
         }
       } catch (e) {
         msg.textContent = '❌ Something went wrong. Try again.';
+        btn.disabled = false;
       }
     }
 
+    function showBots(urls) {
+      // Build the bot list from worker-supplied URLs + local display metadata
+      const list = document.getElementById('bot-list');
+      list.innerHTML = '';
+
+      urls.forEach((url, i) => {
+        const meta = BOT_META[i] || { label: `Add Bot ${i + 1}`, sub: `Bot ${i + 1}`, icon: '🎵' };
+        const a = document.createElement('a');
+        a.href = url;
+        a.className = 'bot-btn';
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.innerHTML = `
+          <span class="icon">${meta.icon}</span>
+          <span class="label">${meta.label}</span>
+          <span class="sublabel">${meta.sub} ↗</span>
+        `;
+        list.appendChild(a);
+      });
+
+      // Swap screens — no page navigation, nothing to bypass
+      document.getElementById('auth-screen').style.display = 'none';
+      document.getElementById('bot-screen').style.display  = 'flex';
+    }
+
     document.getElementById('pw').addEventListener('keydown', e => {
-      if (e.key === 'Enter') submit();
+      if (e.key === 'Enter') doAuth();
     });
   </script>
 </body>
