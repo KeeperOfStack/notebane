@@ -152,14 +152,18 @@ class VoiceCog(commands.Cog, name="Voice"):
                 return
 
         # Resolve which bot's player manager owns this channel (multi-bot routing).
-        # In single-bot mode this is a no-op returning self.players.
-        players = await resolve_players_for_channel(
+        # In single-bot mode this is a no-op returning (self.players, self.bot).
+        result = await resolve_players_for_channel(
             self.bot, interaction, interaction.guild_id, target.id  # type: ignore[arg-type]
         )
-        if players is None:
+        if result is None:
             return  # all bots busy — error already sent
+        players, assigned_bot = result
 
-        player = await _connect_to_channel(interaction, target, players)
+        # Use the assigned bot's channel object so the correct client connects.
+        assigned_channel = assigned_bot.get_channel(target.id) or target
+
+        player = await _connect_to_channel(interaction, assigned_channel, players)
         if player is None:
             return  # error already sent
 

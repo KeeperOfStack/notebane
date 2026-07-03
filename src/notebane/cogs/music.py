@@ -251,12 +251,18 @@ class MusicCog(commands.Cog, name="Music"):
             return None
 
         # Multi-bot routing: resolve which bot's player manager owns this channel.
-        # Single-bot: returns self.players unchanged.
-        players = await resolve_players_for_channel(
+        # Single-bot: returns (self.players, self.bot) unchanged.
+        result = await resolve_players_for_channel(
             self.bot, interaction, interaction.guild_id, channel.id
         )
-        if players is None:
+        if result is None:
             return None  # all bots busy — error already sent
+        players, assigned_bot = result
+
+        # In multi-bot mode the assigned bot may differ from interaction.client.
+        # Fetch the VoiceChannel from the assigned bot's cache so channel.connect()
+        # uses the correct Discord client session.
+        assigned_channel = assigned_bot.get_channel(channel.id) or channel
 
         player = players.get(interaction.guild_id, channel.id)
         if player is not None and not player.is_connected:
@@ -270,7 +276,7 @@ class MusicCog(commands.Cog, name="Music"):
             player = None
         if player is None:
             player = await _connect_to_channel(
-                interaction, channel, players, on_track_start=self._on_track_start
+                interaction, assigned_channel, players, on_track_start=self._on_track_start
             )
             if player is None:
                 return None

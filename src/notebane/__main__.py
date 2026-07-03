@@ -192,20 +192,23 @@ class Notebane(commands.AutoShardedBot):
             self._ytdlp_updater_task = None
 
     async def on_ready(self) -> None:
-        # Guild-scope sync so commands appear instantly on every server
-        for guild in self.guilds:
-            try:
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-                log.info(
-                    "Bot %d: guild-synced commands to %s (%d)",
-                    self._bot_number, guild.name, guild.id,
-                )
-            except Exception as exc:
-                log.warning(
-                    "Bot %d: failed to guild-sync to %s (%d): %s",
-                    self._bot_number, guild.name, guild.id, exc,
-                )
+        # Only Bot 1 registers slash commands — pool bots (2-5) are invisible
+        # audio workers. If all bots synced commands users would see duplicate
+        # /play, /skip, etc. from every bot in the server member list.
+        if self._bot_number == 1:
+            for guild in self.guilds:
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                    log.info(
+                        "Bot %d: guild-synced commands to %s (%d)",
+                        self._bot_number, guild.name, guild.id,
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Bot %d: failed to guild-sync to %s (%d): %s",
+                        self._bot_number, guild.name, guild.id, exc,
+                    )
 
         log.info(
             "Bot %d ready | user=%s | guilds=%d | shards=%d",
@@ -217,6 +220,10 @@ class Notebane(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """Push commands immediately when the bot is invited to a new server."""
+        if self._bot_number != 1:
+            # Pool bots don't register commands — Bot 1 owns the command tree.
+            log.info("Bot %d: joined guild %s (%d) — skipping command sync (pool bot)", self._bot_number, guild.name, guild.id)
+            return
         try:
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)

@@ -81,14 +81,19 @@ async def resolve_players_for_channel(
     interaction: "discord.Interaction",
     guild_id: int,
     channel_id: int,
-) -> "GuildPlayerManager | None":
-    """Return the GuildPlayerManager that should handle *channel_id*.
+) -> "tuple[GuildPlayerManager, Any] | None":
+    """Return ``(GuildPlayerManager, assigned_bot_client)`` for *channel_id*.
 
-    Single-bot: returns ``bot.players`` immediately.
+    Single-bot: returns ``(bot.players, bot)`` immediately.
     Multi-bot:
-      - If a bot is already in the channel → return its manager.
-      - If a free bot exists → assign it (Bot 1 first) → return its manager.
+      - If a bot is already in the channel → return its manager + client.
+      - If a free bot exists → assign it (Bot 1 first) → return its manager + client.
       - All bots busy → send the "all bots busy" error → return None.
+
+    The second element is the bot client that must physically connect to the
+    voice channel.  Callers MUST use ``assigned_client.get_channel(channel_id)``
+    to get a VoiceChannel from the *correct* Discord client's cache before
+    calling ``channel.connect()`` — mixing clients causes the wrong bot to join.
 
     Sends an ephemeral error and returns None on failure.
     """
@@ -98,8 +103,8 @@ async def resolve_players_for_channel(
         # first bot in the guild pool (which is bot.players for Bot 1).
         guild_pool = mgr.bots_for_guild(guild_id) if mgr is not None else []
         if guild_pool and guild_pool[0].client is not None:
-            return guild_pool[0].client.players  # type: ignore[union-attr]
-        return bot.players
+            return guild_pool[0].client.players, guild_pool[0].client  # type: ignore[union-attr]
+        return bot.players, bot
 
     entry = mgr.get_or_assign_bot_for_channel(guild_id, channel_id)
     if entry is None:
@@ -121,7 +126,7 @@ async def resolve_players_for_channel(
         "Routing guild=%d channel=%d → Bot %d",
         guild_id, channel_id, entry.number,
     )
-    return entry.client.players  # type: ignore[union-attr]
+    return entry.client.players, entry.client  # type: ignore[union-attr]
 
 
 def release_channel(bot: Any, channel_id: int) -> None:
