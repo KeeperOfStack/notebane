@@ -22,9 +22,21 @@ Notebane supports running **1 to 5 bots in parallel** inside a single container.
 | **Single bot** | One voice channel at a time per server — the classic setup |
 | **Bot pool (2-5)** | Multiple voice channels playing simultaneously in the same server |
 
-In pool mode, **only Bot 1 registers slash commands** — pool bots (2-5) are silent audio workers. Users interact with `/play`, `/skip`, etc. as normal; the router automatically assigns the right bot behind the scenes.
+### Bot 1 is the primary — the others are silent workers
 
-> **Adding bots to a server:** Each bot in the pool needs to be individually invited to the server via its own OAuth2 link. See the [Adding Pool Bots to Your Server](#adding-pool-bots-to-your-server) section below.
+In a pool, **Bot 1 (Notebane) is the only bot that registers slash commands and responds to users.** Bots 2-5 (Maestro, Cadenza, Capriccio, Calypso) are invisible audio workers — they join voice channels automatically when Bot 1 is already busy, but they never appear in the `/` command menu and users never interact with them directly.
+
+| Bot | Role |
+|---|---|
+| **Bot 1 — Notebane** | Primary: registers all slash commands (`/play`, `/skip`, etc.), handles all user interaction |
+| **Bot 2 — Maestro** | Audio worker: joins a 2nd simultaneous voice channel |
+| **Bot 3 — Cadenza** | Audio worker: joins a 3rd simultaneous voice channel |
+| **Bot 4 — Capriccio** | Audio worker: joins a 4th simultaneous voice channel |
+| **Bot 5 — Calypso** | Audio worker: joins a 5th simultaneous voice channel |
+
+This means you only need to invite as many bots as you want simultaneous voice channels. Inviting just Bot 1 gives you the classic single-bot experience with no behaviour change.
+
+> **Adding bots to a server:** Each bot needs its own OAuth2 invite. See the [Adding Pool Bots to Your Server](#adding-pool-bots-to-your-server) section below.
 
 ---
 
@@ -294,17 +306,7 @@ Each bot in the pool is a separate Discord application and must be invited to yo
 
 **The easiest way** is to use the official invite page at [keeperofstack.github.io/notebane](https://keeperofstack.github.io/notebane/) — enter the invite password and you'll see invite links for all 5 bots in order.
 
-**What each bot does:**
-
-| Bot | Role |
-|---|---|
-| **Notebane** (Bot 1) | Primary — registers slash commands, handles all user interaction |
-| **Maestro** (Bot 2) | Audio worker — joins a second voice channel when Bot 1 is busy |
-| **Cadenza** (Bot 3) | Audio worker — joins a third voice channel |
-| **Capriccio** (Bot 4) | Audio worker — joins a fourth voice channel |
-| **Calypso** (Bot 5) | Audio worker — joins a fifth voice channel |
-
-You only need to invite as many bots as you want simultaneous voice channels. Inviting just Notebane gives you classic single-bot behaviour.
+See the [Bot 1 is the primary](#bot-1-is-the-primary--the-others-are-silent-workers) section above for a full breakdown of each bot's role. Remember: you only need to invite as many bots as you want simultaneous channels.
 
 > **Permissions required for each bot:** `Connect`, `Speak`, `View Channels`, `Send Messages`, `Embed Links`, `Read Message History`, `Use Application Commands`.
 
