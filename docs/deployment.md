@@ -2,6 +2,8 @@
 
 Three deployment methods, ordered from simplest to most configurable.
 
+> **Auto-updates included** — every method below includes [Watchtower](https://containrrr.dev/watchtower/), a companion container that polls GHCR every 5 minutes and automatically pulls + recreates Notebane when a new image is published. Slash commands and interactive buttons are always re-synced on restart — no one needs to kick and reinvite the bot.
+
 ---
 
 ## Prerequisites
@@ -129,13 +131,29 @@ You should see:
 
 ### Updating
 
+Handled automatically by Watchtower — no action needed.
+
+To manually force an update:
+
 ```bash
 docker stop notebane && docker rm notebane
 docker pull ghcr.io/keeperofstack/notebane:latest
 # Re-run the docker run command above
 ```
 
-> Named volumes persist across container removal and redeployments — your database and cookies are safe.
+> If you want auto-updates for a `docker run` deployment, add a Watchtower container alongside it:
+> ```bash
+> docker run -d \
+>   --name notebane-watchtower \
+>   --restart unless-stopped \
+>   -e WATCHTOWER_POLL_INTERVAL=300 \
+>   -e WATCHTOWER_CLEANUP=true \
+>   -e WATCHTOWER_LABEL_ENABLE=true \
+>   -e WATCHTOWER_NO_STARTUP_MESSAGE=true \
+>   -v /var/run/docker.sock:/var/run/docker.sock \
+>   containrrr/watchtower:latest
+> ```
+> Then add `--label com.centurylinklabs.watchtower.enable=true` to your `docker run` command for notebane.
 
 ---
 
@@ -170,6 +188,21 @@ services:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: notebane-watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_POLL_INTERVAL: 300
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_NO_STARTUP_MESSAGE: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   notebane_cookies:
@@ -207,6 +240,21 @@ services:
         max-size: "10m"
         max-file: "5"
     stop_grace_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: notebane-watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_POLL_INTERVAL: 300
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_NO_STARTUP_MESSAGE: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   notebane_cookies:
@@ -291,12 +339,14 @@ docker compose -f docker-compose.prod.yml logs --tail=30
 
 ### Updating to a newer version
 
+Handled automatically by Watchtower — no action needed.
+
+To manually force an update:
+
 ```bash
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d --force-recreate
 ```
-
-> Data in named volumes is never touched by `pull` or `up` — it persists automatically.
 
 ---
 

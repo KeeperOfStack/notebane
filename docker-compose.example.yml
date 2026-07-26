@@ -19,27 +19,55 @@
 #   • Guild with 1 invited bot → identical UX to single-bot mode.
 #
 # ─────────────────────────────────────────────────────────────────────────────
+# AUTO-UPDATES (Watchtower)
+# ─────────────────────────────────────────────────────────────────────────────
+# The watchtower service polls GHCR every 5 minutes and automatically pulls +
+# recreates the notebane container when a new image is published.  The bot
+# re-syncs all slash commands on startup — buttons and commands are always
+# up to date on every server the bot is in, with zero user action needed.
+#
+# ─────────────────────────────────────────────────────────────────────────────
 # SETUP A — single bot (legacy, fully backward-compatible)
 # ─────────────────────────────────────────────────────────────────────────────
 # .env contains:
-#   DISCORD_TOKEN=your-bot-token
+#   DISCORD_TOKEN=***
 #   APPLICATION_ID=your-app-id
 
 services:
   notebane:
-    build: .
     image: ghcr.io/keeperofstack/notebane:latest
+    container_name: notebane
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./cookies:/cookies
-      - ./data:/data
+      - notebane_cookies:/cookies
+      - notebane_data:/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    stop_grace_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: notebane-watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_POLL_INTERVAL: 300
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_NO_STARTUP_MESSAGE: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  notebane_cookies:
+  notebane_data:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SETUP B — two bots (recommended starting point for multi-VC servers)
@@ -48,10 +76,10 @@ services:
 #
 #    environment:
 #      # Bot 1 — favourite; always claims the first voice channel
-#      - BOT_01_TOKEN=${BOT_01_TOKEN}
+#      - BOT_01_TOKEN=***
 #      - BOT_01_ID=${BOT_01_ID}
 #      # Bot 2 — overflow when Bot 1 is occupied
-#      - BOT_02_TOKEN=${BOT_02_TOKEN}
+#      - BOT_02_TOKEN=***
 #      - BOT_02_ID=${BOT_02_ID}
 #      - LOG_LEVEL=INFO
 #      # - YTDL_COOKIEFILE=/cookies/cookies.txt
@@ -62,11 +90,11 @@ services:
 # ─────────────────────────────────────────────────────────────────────────────
 #
 #    environment:
-#      - BOT_01_TOKEN=${BOT_01_TOKEN}
+#      - BOT_01_TOKEN=***
 #      - BOT_01_ID=${BOT_01_ID}
-#      - BOT_02_TOKEN=${BOT_02_TOKEN}
+#      - BOT_02_TOKEN=***
 #      - BOT_02_ID=${BOT_02_ID}
-#      - BOT_03_TOKEN=${BOT_03_TOKEN}
+#      - BOT_03_TOKEN=***
 #      - BOT_03_ID=${BOT_03_ID}
 #      - LOG_LEVEL=INFO
 
@@ -74,10 +102,10 @@ services:
 # .env template for multi-bot setups — copy to .env and fill in values
 # ─────────────────────────────────────────────────────────────────────────────
 #
-#   BOT_01_TOKEN=          # Discord bot token for Bot 1
+#   BOT_01_TOKEN=*** Discord bot token for Bot 1
 #   BOT_01_ID=             # Discord application/bot user ID for Bot 1
-#   BOT_02_TOKEN=          # Bot 2 token (remove if only using one bot)
+#   BOT_02_TOKEN=*** Bot 2 token (remove if only using one bot)
 #   BOT_02_ID=             # Bot 2 application ID
-#   BOT_03_TOKEN=          # Bot 3 token (remove if only using two bots)
+#   BOT_03_TOKEN=*** Bot 3 token (remove if only using two bots)
 #   BOT_03_ID=             # Bot 3 application ID
 #   LOG_LEVEL=INFO
