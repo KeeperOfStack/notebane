@@ -19,14 +19,6 @@
 #   • Guild with 1 invited bot → identical UX to single-bot mode.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# AUTO-UPDATES (Watchtower)
-# ─────────────────────────────────────────────────────────────────────────────
-# The watchtower service polls GHCR every 5 minutes and automatically pulls +
-# recreates the notebane container when a new image is published.  The bot
-# re-syncs all slash commands on startup — buttons and commands are always
-# up to date on every server the bot is in, with zero user action needed.
-#
-# ─────────────────────────────────────────────────────────────────────────────
 # SETUP A — single bot (legacy, fully backward-compatible)
 # ─────────────────────────────────────────────────────────────────────────────
 # .env contains:
@@ -35,39 +27,19 @@
 
 services:
   notebane:
+    build: .
     image: ghcr.io/keeperofstack/notebane:latest
-    container_name: notebane
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - notebane_cookies:/cookies
-      - notebane_data:/data
+      - ./cookies:/cookies
+      - ./data:/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    stop_grace_period: 30s
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: notebane-watchtower
-    restart: unless-stopped
-    environment:
-      WATCHTOWER_POLL_INTERVAL: 300
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_INCLUDE_STOPPED: "false"
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_NO_STARTUP_MESSAGE: "true"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-
-volumes:
-  notebane_cookies:
-  notebane_data:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SETUP B — two bots (recommended starting point for multi-VC servers)

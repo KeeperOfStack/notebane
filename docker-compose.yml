@@ -21,8 +21,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     # Resource guardrails (adjust to your hardware)
     deploy:
       resources:
