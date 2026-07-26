@@ -97,6 +97,15 @@ class NowPlayingView(discord.ui.View):
         release_channel(interaction.client, channel_id)
         await interaction.response.send_message("⏹ Stopped and cleared the queue.", ephemeral=True)
 
+    @discord.ui.button(emoji="↩️", style=discord.ButtonStyle.secondary, custom_id="np_restart")
+    async def restart_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        title = self.player.current.title if self.player.current else None
+        restarted = await self.player.restart()
+        if restarted and title:
+            await interaction.response.send_message(f"↩️ Restarting **{title}**.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Nothing is playing to restart.", ephemeral=True)
+
 
 def _queued_embed(track: Track, position: int) -> discord.Embed:
     embed = discord.Embed(

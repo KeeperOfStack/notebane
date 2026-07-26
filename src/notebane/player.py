@@ -109,6 +109,7 @@ class GuildPlayer:
         # Playback history — tracks appended as they finish; used by previous()
         self._history: deque[Track] = deque(maxlen=20)
         self._going_previous: bool = False  # signal: skip loop/history logic on this stop
+        self._going_restart: bool = False   # signal: replay current track from beginning
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -237,6 +238,16 @@ class GuildPlayer:
                 self.current = None
                 continue
 
+            # If restart() triggered this stop, put the current track back at the
+            # front of the queue without recording it in history, then loop.
+            if self._going_restart:
+                self._going_restart = False
+                if track is not None:
+                    rest = self.queue_list()
+                    self._replace_queue([track] + rest)
+                self.current = None
+                continue
+
             # Record finished track in history (for /previous)
             if track is not None:
                 self._history.append(track)
@@ -256,6 +267,20 @@ class GuildPlayer:
         """Skip the current track."""
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()   # triggers _after_play → _track_done.set()
+
+    async def restart(self) -> bool:
+        """Restart the current track from the beginning.
+
+        Sets _going_restart so the play loop re-queues the same track at the
+        front without recording it in history.  Returns True if a track was
+        restarted, False if nothing is playing.
+        """
+        if self.current is None:
+            return False
+        self._going_restart = True
+        if self.voice_client.is_playing() or self.voice_client.is_paused():
+            self.voice_client.stop()  # triggers _after_play → _track_done.set()
+        return True
 
     async def previous(self) -> Track | None:
         """Go back to the previous track.
