@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -356,3 +357,55 @@ def test_stream_options_enable_complete_bounded_http_support(monkeypatch):
     assert "-initial_request_size 1048576" in options
     assert "-multiple_requests 1" in options
     assert "-short_seek_size 1048576" in options
+
+
+@pytest.mark.asyncio
+async def test_play_source_reports_packet_count_and_callback_state(caplog):
+    voice = _VoiceClient()
+    player = GuildPlayer(voice)  # type: ignore[arg-type]
+    source = SimpleNamespace(
+        read=Mock(side_effect=[b"opus-frame-1", b"opus-frame-2", b""]),
+        is_opus=Mock(return_value=True),
+        cleanup=Mock(),
+    )
+
+    with caplog.at_level("INFO", logger="notebane.player"):
+        task = asyncio.create_task(player._play_source(source))  # type: ignore[arg-type]
+        await asyncio.wait_for(voice.started.wait(), timeout=1)
+        played_source = voice.source
+        assert played_source is not None
+        for _ in range(3):
+            played_source.read()
+        voice.finish()
+        assert await asyncio.wait_for(task, timeout=1) is None
+
+    assert "audio_source_complete: reads=3 opus_packets=2 bytes=24" in caplog.text
+    assert "is_opus=True callback_error=none voice_connected=True" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_playback_completion_callback_runs_on_event_loop_thread():
+    voice = _VoiceClient()
+    player = GuildPlayer(voice)  # type: ignore[arg-type]
+    loop_thread = threading.get_ident()
+    callback_threads = []
+    original_after_play = player._after_play
+
+    def record_callback_thread(error):
+        callback_threads.append(threading.get_ident())
+        original_after_play(error)
+
+    player._after_play = record_callback_thread
+    source = SimpleNamespace(read=Mock(return_value=b""), is_opus=Mock(return_value=True))
+
+    task = asyncio.create_task(player._play_source(source))  # type: ignore[arg-type]
+    await asyncio.wait_for(voice.started.wait(), timeout=1)
+
+    callback = voice.after
+    assert callback is not None
+    worker = threading.Thread(target=callback, args=(None,))
+    worker.start()
+    worker.join()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert callback_threads == [loop_thread]

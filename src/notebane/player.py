@@ -112,6 +112,36 @@ class _ElapsedAudioSource(discord.AudioSource):
         return self.packet_count * 0.02
 
 
+class _ObservedAudioSource(discord.AudioSource):
+    """Count source reads and packets for diagnosing silent voice playback."""
+
+    def __init__(self, source: discord.AudioSource) -> None:
+        self.source = source
+        self.reads = 0
+        self.opus_packets = 0
+        self.bytes_read = 0
+        self._is_opus: bool | None = None
+
+    def read(self) -> bytes:
+        self.reads += 1
+        packet = self.source.read()
+        if packet:
+            self.bytes_read += len(packet)
+            if self.is_opus():
+                self.opus_packets += 1
+        return packet
+
+    def is_opus(self) -> bool:
+        if self._is_opus is None:
+            self._is_opus = bool(self.source.is_opus())
+        return self._is_opus
+
+    def cleanup(self) -> None:
+        cleanup = getattr(self.source, "cleanup", None)
+        if cleanup is not None:
+            cleanup()
+
+
 @lru_cache(maxsize=1)
 def _ffmpeg_supports_bounded_http() -> bool:
     """Return whether the installed FFmpeg exposes bounded HTTP request flags."""
@@ -221,6 +251,7 @@ class GuildPlayer:
         self._track_done = asyncio.Event()
         self.current: Track | None = None
         self._last_play_error: Exception | None = None
+        self._audio_source_metrics: _ObservedAudioSource | None = None
         self.loop_track = False
         self.loop_queue = False
         self._on_track_start = on_track_start  # called with (player, track) on each start
@@ -268,11 +299,27 @@ class GuildPlayer:
             self._play_task = asyncio.get_event_loop().create_task(self._play_loop())
 
     def _after_play(self, error: Exception | None) -> None:
-        """Called by discord.py in a thread when a track finishes."""
+        """Handle audio-player completion on the asyncio event loop."""
         self._last_play_error = error
         if error:
             safe_message = re.sub(r"https?://\S+", "<URL redacted>", str(error))
             log.error("[guild=%d] playback error: %s", self.guild_id, safe_message)
+        metrics = self._audio_source_metrics
+        self._audio_source_metrics = None
+        if metrics is not None:
+            connected = self.voice_client.is_connected()
+            opus_state = metrics._is_opus
+            log.info(
+                "[guild=%d] audio_source_complete: reads=%d opus_packets=%d bytes=%d "
+                "is_opus=%s callback_error=%s voice_connected=%s",
+                self.guild_id,
+                metrics.reads,
+                metrics.opus_packets,
+                metrics.bytes_read,
+                str(opus_state) if opus_state is not None else "unknown",
+                type(error).__name__ if error is not None else "none",
+                connected,
+            )
         self._track_done.set()
 
     async def _play_loop(self) -> None:
@@ -613,10 +660,21 @@ class GuildPlayer:
     async def _play_source(self, source: discord.AudioSource) -> Exception | None:
         self._track_done.clear()
         self._last_play_error = None
+        source_has_reader = callable(getattr(source, "read", None))
+        source_has_opus_flag = callable(getattr(source, "is_opus", None))
+        observed_source = _ObservedAudioSource(source) if source_has_reader and source_has_opus_flag else None
+        self._audio_source_metrics = observed_source
+        play_source = observed_source if observed_source is not None else source
+        loop = asyncio.get_running_loop()
+
+        def _after_from_audio_thread(error: Exception | None) -> None:
+            loop.call_soon_threadsafe(self._after_play, error)
+
         try:
-            self.voice_client.play(source, after=self._after_play)
+            self.voice_client.play(play_source, after=_after_from_audio_thread)
         except Exception:
-            cleanup = getattr(source, "cleanup", None)
+            self._audio_source_metrics = None
+            cleanup = getattr(play_source, "cleanup", None)
             if cleanup is not None:
                 try:
                     cleanup()
