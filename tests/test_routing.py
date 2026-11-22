@@ -7,20 +7,15 @@ All run offline — no Discord connection.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from notebane.bot_manager import BotEntry, BotManager
+from notebane.bot_manager import BotManager
 from notebane.routing import (
-    ALL_BUSY_MSG,
     get_all_players_for_guild,
     get_players_for_channel,
     release_channel,
     resolve_players_for_channel,
 )
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -87,7 +82,9 @@ class TestSingleBotPassthrough:
         bot = _make_bot(pool)
         interaction = _make_interaction(bot)
         result = await resolve_players_for_channel(bot, interaction, guild_id=1, channel_id=9001)
-        assert result is bot.players
+        assert result is not None
+        assert result[0] is bot.players
+        assert result[1] is pool.bots[0].client
         interaction.response.send_message.assert_not_called()
 
     def test_release_channel_single_bot_noop(self):
@@ -114,7 +111,9 @@ class TestMultiBotRouting:
 
         result = await resolve_players_for_channel(bot, interaction, guild_id=1, channel_id=5001)
 
-        assert result is pool.bots[0].client.players  # Bot 1
+        assert result is not None
+        assert result[0] is pool.bots[0].client.players  # Bot 1 manager
+        assert result[1] is pool.bots[0].client
         assert pool.bots[0].voice_channel_id == 5001
 
     async def test_resolve_routes_to_existing_bot(self):
@@ -127,7 +126,9 @@ class TestMultiBotRouting:
         interaction = _make_interaction(bot)
         result = await resolve_players_for_channel(bot, interaction, guild_id=1, channel_id=5002)
 
-        assert result is pool.bots[1].client.players  # Bot 2
+        assert result is not None
+        assert result[0] is pool.bots[1].client.players  # Bot 2 manager
+        assert result[1] is pool.bots[1].client
 
     async def test_resolve_all_busy_sends_error(self):
         pool = _make_pool((1, "tok-A", 111), (2, "tok-B", 222))
@@ -163,7 +164,9 @@ class TestMultiBotRouting:
         interaction = _make_interaction(bot)
         result = await resolve_players_for_channel(bot, interaction, guild_id=1, channel_id=5003)
 
-        assert result is pool.bots[0].client.players  # Bot 1 again
+        assert result is not None
+        assert result[0] is pool.bots[0].client.players  # Bot 1 manager
+        assert result[1] is pool.bots[0].client
 
     def test_get_players_for_channel_returns_assigned_bot_players(self):
         pool = self._pool3()

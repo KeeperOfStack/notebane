@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
+import tempfile
+import threading
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import yt_dlp
@@ -46,6 +53,46 @@ FFMPEG_OPTIONS = "-vn"
 
 class YTDLError(Exception):
     """Raised when yt-dlp fails to extract info."""
+
+
+class _DownloadCancelled(Exception):
+    """Internal signal used to stop an in-flight yt-dlp download."""
+
+
+@dataclass
+class PreparedMedia:
+    """A downloaded track kept in a private temporary directory."""
+
+    path: str
+    directory: str
+    audio_codec: str | None
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+
+@dataclass
+class PreparedTrack:
+    """Resolved track metadata and optional fully-downloaded media."""
+
+    track: Track
+    media: PreparedMedia | None
+
+
+@dataclass(frozen=True)
+class FastStream:
+    """Short-lived direct media URL used only for quick-start playback."""
+
+    url: str
+    http_headers: dict[str, str] | None
+    duration: int | None
+    is_live: bool
+    audio_codec: str | None
+    video_codec: str | None
+    format_id: str | None
+
+
+FAST_STREAM_URL_MAX_AGE = 60.0
 
 
 # Phrases in yt-dlp error messages that indicate age-restriction
@@ -142,7 +189,12 @@ def strip_mix_context(url: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
+def _extract_sync(
+    query: str,
+    cookiefile: str | None = None,
+    *,
+    fast_stream: bool = False,
+) -> dict[str, Any]:
     """Run yt-dlp synchronously (called in a thread executor).
 
     Cookie strategy (single tracks):
@@ -151,6 +203,12 @@ def _extract_sync(query: str, cookiefile: str | None = None) -> dict[str, Any]:
       Normal videos never touch the cookie file.
     """
     opts = dict(YTDL_OPTS)
+    if fast_stream:
+        # The Android client currently yields a fast-start MP4/AAC stream on
+        # the affected host; the durable audio-only copy is downloaded with
+        # the normal best-audio selector in parallel.
+        opts["format"] = "bestaudio/best"
+        opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
 
     with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
         try:
@@ -306,5 +364,253 @@ async def resolve(
         requester=requester,
         http_headers=info.get("http_headers") or None,
     )
+    # Runtime-only marker; deliberately excluded from Track serialization.
+    track.__dict__["_resolved_monotonic"] = time.monotonic()
     log.debug("Resolved %r → %s (%.0fs)", query, track.title, duration or 0)
     return track
+
+
+def _resolve_fast_stream_sync(query: str, cookiefile: str | None) -> FastStream:
+    info = _extract_sync(query, cookiefile, fast_stream=True)
+    url = info.get("url")
+    if not url:
+        raise YTDLError("yt-dlp returned no fast-start stream URL.")
+    duration = info.get("duration")
+    return FastStream(
+        url=url,
+        http_headers=info.get("http_headers") or None,
+        duration=int(duration) if duration is not None else None,
+        is_live=bool(info.get("is_live")),
+        audio_codec=info.get("acodec"),
+        video_codec=info.get("vcodec"),
+        format_id=str(info["format_id"]) if info.get("format_id") is not None else None,
+    )
+
+
+async def resolve_fast_stream(
+    track: Track,
+    cookiefile: str | None = None,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> FastStream:
+    """Resolve a just-in-time low-latency stream without persisting its URL."""
+    query = track.webpage_url or track.url
+    if not query:
+        raise YTDLError("Track has no source URL.")
+
+    resolved_at = getattr(track, "_resolved_monotonic", None)
+    age = time.monotonic() - resolved_at if isinstance(resolved_at, (int, float)) else None
+    if (
+        track.resolved
+        and track.url
+        and track.url != query
+        and age is not None
+        and 0 <= age <= FAST_STREAM_URL_MAX_AGE
+    ):
+        return FastStream(
+            url=track.url,
+            http_headers=track.http_headers,
+            duration=track.duration,
+            is_live=track.duration is None,
+            audio_codec=None,
+            video_codec=None,
+            format_id=None,
+        )
+
+    ev = loop or asyncio.get_running_loop()
+    try:
+        return await ev.run_in_executor(
+            None, partial(_resolve_fast_stream_sync, query, cookiefile)
+        )
+    except YTDLError:
+        raise
+    except Exception as exc:
+        raise YTDLError(_safe_error(exc)) from exc
+
+
+def _safe_error(exc: Exception) -> str:
+    """Avoid leaking expiring media URLs from downloader errors into logs/chat."""
+    return re.sub(r"https?://\S+", "<URL redacted>", str(exc))
+
+
+def _prepare_sync(
+    query: str,
+    requester: str,
+    cookiefile: str | None,
+    directory: str,
+    cancelled: threading.Event,
+) -> PreparedTrack:
+    """Resolve and fully download a finite track in a worker thread."""
+    root = Path(directory)
+
+    def make_track(info: Mapping[str, Any], *, buffered: bool) -> Track:
+        page_url = info.get("webpage_url") or info.get("original_url") or query
+        duration = info.get("duration")
+        return Track(
+            title=info.get("title") or "Unknown title",
+            # Never persist a signed CDN URL for buffered tracks. Restore will
+            # resolve the stable page URL again when playback resumes.
+            url=page_url if buffered else (info.get("url") or page_url),
+            webpage_url=page_url,
+            duration=int(duration) if duration is not None else None,
+            thumbnail=info.get("thumbnail"),
+            requester=requester,
+            http_headers=None if buffered else (info.get("http_headers") or None),
+            resolved=not buffered,
+        )
+
+    def progress_hook(_status: dict[str, Any]) -> None:
+        if cancelled.is_set():
+            raise _DownloadCancelled("track download cancelled")
+
+    def attempt(auth_cookiefile: str | None) -> PreparedTrack:
+        out_dir = root / ("authenticated" if auth_cookiefile else "public")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        opts = dict(YTDL_OPTS)
+        opts.update({
+            "outtmpl": str(out_dir / "%(extractor)s-%(id)s.%(ext)s"),
+            "cachedir": False,
+            "noplaylist": True,
+            "socket_timeout": 20,
+            "retries": 5,
+            "fragment_retries": 5,
+            "progress_hooks": [progress_hook],
+        })
+        if auth_cookiefile:
+            opts["cookiefile"] = auth_cookiefile
+
+        with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
+            info = ydl.extract_info(query, download=False)
+            if info is None:
+                raise YTDLError("yt-dlp found no media for this source.")
+            if info.get("_type") == "playlist":
+                entries = iter(info.get("entries") or ())
+                info = next(entries, None)
+                if info is None:
+                    raise YTDLError("Playlist had no entries.")
+
+            if cancelled.is_set():
+                raise _DownloadCancelled("track download cancelled")
+
+            # Do not wait forever downloading a livestream. It remains on the
+            # existing direct-stream path; finite tracks are buffered locally.
+            if info.get("is_live") or info.get("duration") is None:
+                return PreparedTrack(make_track(info, buffered=False), None)
+
+            downloaded = ydl.process_ie_result(info, download=True)
+            if cancelled.is_set():
+                raise _DownloadCancelled("track download cancelled")
+            info = downloaded or info
+
+            requested = info.get("requested_downloads") or []
+            candidates = [info.get("filepath"), info.get("_filename")]
+            candidates.extend(item.get("filepath") for item in requested if item)
+            try:
+                candidates.append(ydl.prepare_filename(info))
+            except Exception as exc:  # noqa: BLE001 - fall back to inspecting the isolated output directory
+                log.debug("Could not infer yt-dlp output filename: %s", _safe_error(exc))
+            path = next(
+                (Path(candidate) for candidate in candidates
+                 if candidate and Path(candidate).is_file()),
+                None,
+            )
+            if path is None:
+                completed = [
+                    item for item in out_dir.rglob("*")
+                    if item.is_file() and not item.name.endswith((".part", ".ytdl"))
+                ]
+                path = completed[0] if len(completed) == 1 else None
+            if path is None or path.stat().st_size == 0:
+                raise YTDLError("yt-dlp finished without a complete audio file.")
+
+            audio_codec = next(
+                (item.get("acodec") for item in requested if item and item.get("acodec")),
+                info.get("acodec"),
+            )
+            track = make_track(info, buffered=True)
+            return PreparedTrack(
+                track,
+                PreparedMedia(str(path), str(root), audio_codec),
+            )
+
+    try:
+        try:
+            result = attempt(None)
+        except Exception as exc:
+            if cancelled.is_set():
+                raise _DownloadCancelled("track download cancelled") from exc
+            if _is_age_restricted_error(exc):
+                if not cookiefile:
+                    raise YTDLError(
+                        "Age-restricted content — upload cookies via `/ytlogin` to access this video."
+                    ) from exc
+                log.info("Age-restricted video — retrying buffered download with cookies")
+                try:
+                    result = attempt(cookiefile)
+                except Exception as retry_exc:
+                    if cancelled.is_set():
+                        raise _DownloadCancelled("track download cancelled") from retry_exc
+                    if _is_invalid_cookies_error(retry_exc):
+                        raise YTDLError(
+                            "Your YouTube cookies have been rotated and are no longer valid. "
+                            "Re-export them and upload via `/ytlogin`."
+                        ) from retry_exc
+                    if _is_age_restricted_error(retry_exc):
+                        raise YTDLError(
+                            "Age-restricted content — your cookies may have expired or been rotated. "
+                            "Upload fresh cookies with `/ytlogin`."
+                        ) from retry_exc
+                    raise YTDLError(_safe_error(retry_exc)) from retry_exc
+            elif isinstance(exc, YTDLError):
+                raise
+            else:
+                raise YTDLError(_safe_error(exc)) from exc
+
+        if cancelled.is_set():
+            if result.media:
+                result.media.cleanup()
+            raise _DownloadCancelled("track download cancelled")
+        if result.media is None:
+            shutil.rmtree(root, ignore_errors=True)
+        return result
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
+def _cleanup_abandoned_download(future: asyncio.Future[PreparedTrack]) -> None:
+    """Release a finished download if its awaiting playback task was cancelled."""
+    try:
+        result = future.result()
+    except (asyncio.CancelledError, _DownloadCancelled, YTDLError):
+        return
+    if result.media:
+        result.media.cleanup()
+
+
+async def prepare_track(
+    track: Track,
+    cookiefile: str | None = None,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> PreparedTrack:
+    """Refresh a track just before use and buffer finite audio to local disk.
+
+    Streams with unknown duration remain live; finite tracks are fully
+    downloaded before FFmpeg starts, so playback no longer reads from a
+    short-lived YouTube CDN URL mid-track.
+    """
+    query = track.webpage_url or track.url
+    if not query:
+        raise YTDLError("Track has no source URL.")
+    ev = loop or asyncio.get_running_loop()
+    directory = tempfile.mkdtemp(prefix="notebane-track-")
+    cancelled = threading.Event()
+    worker = ev.run_in_executor(
+        None,
+        partial(_prepare_sync, query, track.requester, cookiefile, directory, cancelled),
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancelled.set()
+        worker.add_done_callback(_cleanup_abandoned_download)
+        raise

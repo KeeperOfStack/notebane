@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from notebane.bot_manager import BotManager
 from notebane.routing import ALL_BUSY_MSG, resolve_players_for_channel
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,7 +111,9 @@ class TestGuildSeesOneBotOfMany:
 
         result = await resolve_players_for_channel(bot, ix, guild_id=100, channel_id=5001)
 
-        assert result is pool.bots[1].client.players  # Bot 2's manager
+        assert result is not None
+        assert result[0] is pool.bots[1].client.players  # Bot 2's manager
+        assert result[1] is pool.bots[1].client
         ix.response.send_message.assert_not_called()
 
 
@@ -182,7 +181,9 @@ class TestAllBotsBusy:
         ix = _make_interaction()
         result = await resolve_players_for_channel(bot, ix, guild_id=100, channel_id=5003)
 
-        assert result is pool.bots[0].client.players  # bot 1 reassigned
+        assert result is not None
+        assert result[0] is pool.bots[0].client.players  # bot 1 manager reassigned
+        assert result[1] is pool.bots[0].client
         ix.response.send_message.assert_not_called()
 
     async def test_busy_message_sent_ephemerally(self):

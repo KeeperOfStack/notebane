@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+import re
+import shlex
+import subprocess
 from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import discord
 
 if TYPE_CHECKING:
-    pass
+    from notebane.ytdl import FastStream, PreparedMedia, PreparedTrack
 
 log = logging.getLogger("notebane.player")
 
@@ -49,7 +54,7 @@ class Track:
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
     @classmethod
-    def make_stub(cls, entry: dict, requester: str = "unknown") -> "Track":
+    def make_stub(cls, entry: dict, requester: str = "unknown") -> Track:
         """Build an unresolved Track from a yt-dlp flat playlist entry.
 
         Uses only metadata available from flat extraction (no yt-dlp resolve call).
@@ -77,6 +82,125 @@ class Track:
 NowPlayingCallback = Callable[["GuildPlayer", Track], None]
 
 
+class _ElapsedAudioSource(discord.AudioSource):
+    """Count emitted 20 ms Opus packets so a local fallback can seek accurately."""
+
+    def __init__(self, source: discord.AudioSource) -> None:
+        self.source = source
+        self.packet_count = 0
+
+    def read(self) -> bytes:
+        packet = self.source.read()
+        if packet:
+            self.packet_count += 1
+        return packet
+
+    def is_opus(self) -> bool:
+        return self.source.is_opus()
+
+    def cleanup(self) -> None:
+        cleanup = getattr(self.source, "cleanup", None)
+        if cleanup is not None:
+            cleanup()
+
+    @property
+    def _current_error(self) -> Exception | None:
+        return getattr(self.source, "_current_error", None)
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return self.packet_count * 0.02
+
+
+@lru_cache(maxsize=1)
+def _ffmpeg_supports_bounded_http() -> bool:
+    """Return whether the installed FFmpeg exposes bounded HTTP request flags."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "protocol=http"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    output = result.stdout + result.stderr
+    return (
+        result.returncode == 0
+        and "-request_size" in output
+        and "-initial_request_size" in output
+    )
+
+
+def _stream_before_options(headers: dict[str, str] | None) -> str:
+    """Build FFmpeg input flags, adding bounded HTTP flags when supported."""
+    flags = [
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+    ]
+    if _ffmpeg_supports_bounded_http():
+        flags.extend((
+            "-multiple_requests", "1",
+            "-request_size", "1048576",
+            "-initial_request_size", "1048576",
+            "-short_seek_size", "1048576",
+        ))
+    if headers:
+        header_blob = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+        flags.extend(("-headers", shlex.quote(header_blob)))
+    return " ".join(flags)
+
+
+def _local_seek_options(seconds: float) -> str:
+    return f"-ss {max(0.0, seconds):.3f}"
+
+
+def _stable_track(track: Track) -> Track:
+    """Keep expiring media URLs out of player state and restore snapshots."""
+    page_url = track.webpage_url or track.url
+    return Track(
+        title=track.title,
+        url=page_url,
+        webpage_url=page_url,
+        duration=track.duration,
+        thumbnail=track.thumbnail,
+        requester=track.requester,
+        http_headers=None,
+        resolved=False,
+    )
+
+
+def _local_source(media: PreparedMedia, seek_seconds: float | None = None) -> discord.AudioSource:
+    codec = "copy" if (media.audio_codec or "").lower() in {"opus", "libopus"} else None
+    kwargs = {"options": FFMPEG_OPTIONS, "codec": codec}
+    if seek_seconds is not None and seek_seconds > 0:
+        kwargs["before_options"] = _local_seek_options(seek_seconds)
+    return discord.FFmpegOpusAudio(media.path, **kwargs)
+
+
+def _direct_source(track: Track) -> discord.AudioSource:
+    before_options = FFMPEG_BEFORE_OPTIONS
+    if track.http_headers:
+        header_blob = "".join(f"{key}: {value}\r\n" for key, value in track.http_headers.items())
+        before_options += " -headers " + shlex.quote(header_blob)
+    return discord.FFmpegOpusAudio(
+        track.url,
+        before_options=before_options,
+        options=FFMPEG_OPTIONS,
+    )
+
+
+def _fast_source(stream: FastStream) -> _ElapsedAudioSource:
+    source = discord.FFmpegOpusAudio(
+        stream.url,
+        before_options=_stream_before_options(stream.http_headers),
+        options=FFMPEG_OPTIONS,
+    )
+    return _ElapsedAudioSource(source)
+
+
 class GuildPlayer:
     """Manages playback for a single voice channel in a guild.
 
@@ -96,11 +220,14 @@ class GuildPlayer:
         self._play_task: asyncio.Task | None = None
         self._track_done = asyncio.Event()
         self.current: Track | None = None
+        self._last_play_error: Exception | None = None
         self.loop_track = False
         self.loop_queue = False
         self._on_track_start = on_track_start  # called with (player, track) on each start
         self._bg_tasks: set[asyncio.Task] = set()  # background enqueue tasks — cancelled on stop/disconnect
         self._cookiefile: str | None = None  # set by music cog; forwarded to JIT resolve
+        self._prefetch_task: asyncio.Task | None = None
+        self._prefetch_track: Track | None = None
 
         # Undo/redo stacks — in-memory, session-scoped (cleared on bot restart by design)
         self._undo_stack: deque[list[Track]] = deque(maxlen=UNDO_DEPTH)
@@ -142,124 +269,145 @@ class GuildPlayer:
 
     def _after_play(self, error: Exception | None) -> None:
         """Called by discord.py in a thread when a track finishes."""
+        self._last_play_error = error
         if error:
-            log.error("[guild=%d] playback error: %s", self.guild_id, error)
+            safe_message = re.sub(r"https?://\S+", "<URL redacted>", str(error))
+            log.error("[guild=%d] playback error: %s", self.guild_id, safe_message)
         self._track_done.set()
 
     async def _play_loop(self) -> None:
-        """Dequeue tracks and stream them one by one."""
+        """Start a fast stream immediately and spool finite audio for recovery."""
         log.debug("[guild=%d channel=%d] play loop started", self.guild_id, self.channel_id)
 
         while self.is_connected:
             try:
-                track = await asyncio.wait_for(self.queue.get(), timeout=300.0)
+                queued_track = await asyncio.wait_for(self.queue.get(), timeout=300.0)
             except TimeoutError:
-                # Idle for 5 minutes — disconnect
                 log.info("[guild=%d channel=%d] idle timeout, disconnecting", self.guild_id, self.channel_id)
                 await self.disconnect()
                 return
 
+            track = _stable_track(queued_track)
             self.current = track
-            self._track_done.clear()
+            media = None
+            preparation_task = None
+            try:
+                prepared, preparation_task = await self._claim_preparation(queued_track)
 
-            # JIT-resolve stub tracks: fetch the real stream URL now, just
-            # before we hand it to FFmpeg. Stubs are created during instant
-            # playlist loading (flat extract only — no per-track yt-dlp call).
-            if not track.resolved:
-                try:
-                    from notebane.ytdl import resolve as ytdl_resolve
-                    track = await ytdl_resolve(
-                        track.webpage_url,
-                        requester=track.requester,
-                        cookiefile=self._cookiefile,
-                    )
+                if prepared is not None and prepared.media is not None:
+                    media = prepared.media
+                    track = _stable_track(prepared.track)
                     self.current = track
-                except Exception:
-                    log.exception(
-                        "[guild=%d] JIT resolve failed for %r — skipping track",
-                        self.guild_id, track.webpage_url,
+                    await self._announce_track(track)
+                    error = await self._play_source(_local_source(media))
+                elif prepared is not None:
+                    # Live sources cannot be fully spooled; use their resolved
+                    # direct URL and preserve the existing streaming behavior.
+                    await self._announce_track(track)
+                    error = await self._play_source(_direct_source(prepared.track))
+                else:
+                    from notebane.ytdl import YTDLError, resolve_fast_stream
+
+                    try:
+                        fast_stream = await resolve_fast_stream(
+                            queued_track, cookiefile=self._cookiefile
+                        )
+                        fast_audio = _fast_source(fast_stream)
+                    except (YTDLError, discord.ClientException, OSError) as fast_exc:
+                        log.warning(
+                            "[guild=%d] fast-stream setup failed (%s); waiting for local preparation",
+                            self.guild_id,
+                            type(fast_exc).__name__,
+                        )
+                        if preparation_task is None:
+                            raise RuntimeError("no preparation task is available for fallback")
+                        prepared = await preparation_task
+                        preparation_task = None
+                        if prepared.media is not None:
+                            media = prepared.media
+                            track = _stable_track(prepared.track)
+                            self.current = track
+                            await self._announce_track(track)
+                            error = await self._play_source(_local_source(media))
+                        else:
+                            await self._announce_track(track)
+                            error = await self._play_source(_direct_source(prepared.track))
+                    else:
+                        await self._announce_track(track)
+                        error = await self._play_source(fast_audio)
+                        if error is not None:
+                            log.warning(
+                                "[guild=%d] fast stream for %r failed; recovering from local audio",
+                                self.guild_id,
+                                track.title,
+                            )
+                            if preparation_task is None:
+                                log.error("[guild=%d] no local preparation task is available", self.guild_id)
+                            else:
+                                try:
+                                    prepared = await preparation_task
+                                    preparation_task = None
+                                except asyncio.CancelledError:
+                                    raise
+                                except Exception:
+                                    log.exception(
+                                        "[guild=%d] local recovery download failed for %r",
+                                        self.guild_id,
+                                        track.title,
+                                    )
+                                else:
+                                    if prepared.media is not None:
+                                        media = prepared.media
+                                        track = _stable_track(prepared.track)
+                                        self.current = track
+                                        error = await self._play_source(
+                                            _local_source(media, fast_audio.elapsed_seconds)
+                                        )
+                                    else:
+                                        log.error(
+                                            "[guild=%d] no finite local fallback for %r",
+                                            self.guild_id,
+                                            track.title,
+                                        )
+
+                if error is not None:
+                    log.error(
+                        "[guild=%d] track %r ended with a playback error; not recording it as completed",
+                        self.guild_id,
+                        track.title,
                     )
                     self.current = None
                     continue
 
-            log.info(
-                "[guild=%d channel=%d] playing: %s (req: %s)",
-                self.guild_id, self.channel_id, track.title, track.requester,
-            )
+                if self._going_previous:
+                    self._going_previous = False
+                    self.current = None
+                    continue
 
-            # Notify via callback (music cog sends the "now playing" embed)
-            if self._on_track_start:
-                try:
-                    self._on_track_start(self, track)
-                except Exception:
-                    log.exception("on_track_start callback raised")
-
-            # Record metric
-            try:
-                from notebane.metrics import record_track_played
-                record_track_played()
-            except Exception:
-                pass
-
-            try:
-                # Build the before_options with any headers yt-dlp requires
-                # (e.g. User-Agent for ANDROID_VR client URLs — without these
-                # YouTube returns HTTP 403 and FFmpeg exits with code 8).
-                before_opts = FFMPEG_BEFORE_OPTIONS
-                if track.http_headers:
-                    header_str = "".join(
-                        f' -headers "{k}: {v}\\r\\n"'
-                        for k, v in track.http_headers.items()
-                    )
-                    before_opts = before_opts + header_str
-                source = discord.FFmpegOpusAudio(
-                    track.url,
-                    before_options=before_opts,
-                    options=FFMPEG_OPTIONS,
-                )
-            except Exception:
-                log.exception("[guild=%d] FFmpeg source creation failed for %r", self.guild_id, track.title)
-                self.current = None
-                continue
-
-            self.voice_client.play(source, after=self._after_play)
-
-            # Pre-resolve the next unresolved stub while this track plays,
-            # so the JIT resolve in the next loop iteration is often a no-op.
-            self._start_presolve()
-
-            # Wait for this track to finish (or be stopped)
-            await self._track_done.wait()
-
-            # If previous() triggered this stop, skip all loop/history logic —
-            # the queue has already been rebuilt with the previous track at front.
-            if self._going_previous:
-                self._going_previous = False
-                self.current = None
-                continue
-
-            # If restart() triggered this stop, put the current track back at the
-            # front of the queue without recording it in history, then loop.
-            if self._going_restart:
-                self._going_restart = False
-                if track is not None:
+                if self._going_restart:
+                    self._going_restart = False
                     rest = self.queue_list()
                     self._replace_queue([track] + rest)
-                self.current = None
-                continue
+                    self.current = None
+                    continue
 
-            # Record finished track in history (for /previous)
-            if track is not None:
                 self._history.append(track)
-
-            # Loop-track: re-queue same track at front
-            if self.loop_track and self.current is not None:
-                await self.queue.put(track)
-            elif self.loop_queue and track is not None:
-                # Loop-queue: re-add to end so the whole queue cycles
-                await self.queue.put(track)
-
-            self.current = None
+                if (self.loop_track and self.current is not None) or self.loop_queue:
+                    await self.queue.put(track)
+                self.current = None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception(
+                    "[guild=%d] track preparation/playback failed for %r; advancing queue",
+                    self.guild_id,
+                    track.title,
+                )
+                self.current = None
+            finally:
+                await self._dispose_preparation(preparation_task, keep_media=media)
+                if media is not None:
+                    media.cleanup()
 
         log.debug("[guild=%d channel=%d] play loop exited", self.guild_id, self.channel_id)
 
@@ -401,55 +549,154 @@ class GuildPlayer:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
-    def _start_presolve(self) -> None:
-        """Kick off a background resolve for the first unresolved stub in the queue.
+    async def _prepare_track(self, track: Track) -> PreparedTrack:
+        from notebane.ytdl import prepare_track
+        return await prepare_track(track, cookiefile=self._cookiefile)
 
-        Called once after playback starts on each track. Hides JIT latency by
-        resolving the next stub while the current track is still playing.
-        Only one presolve runs at a time.
-        """
-        # Don't double-spawn
-        if any(getattr(t, "_is_presolve", False) for t in self._bg_tasks):
-            return
-        dq = list(self.queue._queue)  # type: ignore[attr-defined]
-        for i, t in enumerate(dq):
-            if not t.resolved:
-                task = asyncio.get_event_loop().create_task(self._presolve_at(i, t))
-                task._is_presolve = True  # type: ignore[attr-defined]
-                self._bg_tasks.add(task)
-                task.add_done_callback(self._bg_tasks.discard)
-                return
+    async def _claim_preparation(
+        self, track: Track
+    ) -> tuple[PreparedTrack | None, asyncio.Task[PreparedTrack] | None]:
+        """Claim a matching prefetch, without delaying the fast-stream path."""
+        from notebane.ytdl import YTDLError
 
-    async def _presolve_at(self, idx: int, stub: Track) -> None:
-        """Resolve `stub` and swap it in-place at queue position `idx`.
+        task = self._prefetch_task
+        target = self._prefetch_track
+        self._prefetch_task = None
+        self._prefetch_track = None
 
-        Safe to race with the play loop: if the loop JIT-resolves the same
-        track first, the swap is a no-op (resolved flag already True).
-        """
+        if task is not None and target is track:
+            if not task.done():
+                return None, task
+            try:
+                return task.result(), None
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                log.warning("[guild=%d] completed audio prefetch was cancelled; retrying", self.guild_id)
+            except YTDLError:
+                log.exception("[guild=%d] completed audio prefetch failed; retrying", self.guild_id)
+        elif task is not None:
+            if not task.done():
+                task.cancel()
+            try:
+                stale = await task
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                stale = None
+            except YTDLError:
+                stale = None
+            if stale is not None and stale.media is not None:
+                stale.media.cleanup()
+
+        task = asyncio.get_running_loop().create_task(self._prepare_track(track))
+        return None, task
+
+    async def _announce_track(self, track: Track) -> None:
+        log.info(
+            "[guild=%d channel=%d] playing: %s (req: %s)",
+            self.guild_id, self.channel_id, track.title, track.requester,
+        )
+        if self._on_track_start:
+            try:
+                self._on_track_start(self, track)
+            except Exception:
+                log.exception("on_track_start callback raised")
         try:
-            from notebane.ytdl import resolve as ytdl_resolve
-            resolved = await ytdl_resolve(
-                stub.webpage_url,
-                requester=stub.requester,
-                cookiefile=self._cookiefile,
-            )
-            # Swap in-place only if the stub is still there and still unresolved
-            dq = self.queue._queue  # type: ignore[attr-defined]
-            dq_list = list(dq)
-            if (
-                idx < len(dq_list)
-                and dq_list[idx].webpage_url == stub.webpage_url
-                and not dq_list[idx].resolved
-            ):
-                dq_list[idx] = resolved
-                dq.clear()
-                dq.extend(dq_list)
-                log.debug("[guild=%d] pre-resolved %r at pos %d", self.guild_id, stub.title, idx)
+            from notebane.metrics import record_track_played
+            record_track_played()
+        except Exception as exc:  # noqa: BLE001 - metrics must never interrupt audio playback
+            log.debug("Track-play metric unavailable: %s", exc)
+
+    async def _play_source(self, source: discord.AudioSource) -> Exception | None:
+        self._track_done.clear()
+        self._last_play_error = None
+        try:
+            self.voice_client.play(source, after=self._after_play)
         except Exception:
-            log.debug(
-                "[guild=%d] presolve failed for %r — play loop will JIT resolve",
-                self.guild_id, stub.webpage_url,
-            )
+            cleanup = getattr(source, "cleanup", None)
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception:
+                    log.debug("[guild=%d] audio source cleanup failed after play startup error", self.guild_id, exc_info=True)
+            raise
+        self._start_audio_prefetch()
+        await self._track_done.wait()
+        return self._last_play_error
+
+    async def _dispose_preparation(
+        self, task: asyncio.Task[PreparedTrack] | None, keep_media: PreparedMedia | None = None
+    ) -> None:
+        from notebane.ytdl import YTDLError
+
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            return
+        except YTDLError:
+            return
+        if result.media is not None and result.media is not keep_media:
+            result.media.cleanup()
+
+    @staticmethod
+    def _cleanup_prefetch_result(task: asyncio.Task) -> None:
+        from notebane.ytdl import YTDLError
+
+        try:
+            result = task.result()
+        except (asyncio.CancelledError, YTDLError):
+            return
+        if result.media is not None:
+            result.media.cleanup()
+
+    def _start_audio_prefetch(self) -> None:
+        """Download at most the next finite queued track while this one plays."""
+        queued = self.queue_list()
+        if not queued or queued[0].duration is None:
+            return
+        target = queued[0]
+        existing = self._prefetch_task
+        if existing is not None:
+            if self._prefetch_track is target:
+                return
+            if not existing.done():
+                return
+            existing.add_done_callback(self._cleanup_prefetch_result)
+
+        self._prefetch_track = target
+        self._prefetch_task = asyncio.get_running_loop().create_task(self._prepare_track(target))
+
+    async def _cancel_audio_prefetch(self) -> None:
+        from notebane.ytdl import YTDLError
+
+        task = self._prefetch_task
+        self._prefetch_task = None
+        self._prefetch_track = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            return
+        except YTDLError:
+            return
+        if result.media is not None:
+            result.media.cleanup()
 
     def insert_at(self, pos: int, track: Track) -> None:
         """Insert a single track at queue position `pos` (0 = front).
@@ -487,6 +734,8 @@ class GuildPlayer:
         """Stop playback and clear the queue."""
         self.loop_track = False
         self.loop_queue = False
+
+        await self._cancel_audio_prefetch()
 
         # Snapshot queue + current track BEFORE draining — powers /restore.
         # Import here to avoid circular import at module level.
