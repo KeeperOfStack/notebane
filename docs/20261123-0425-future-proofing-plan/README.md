@@ -85,7 +85,7 @@ Treat the webhook URL like a password: anyone who has it can post into that chan
 
 ## Workstream 2 — Locked dependencies, update PRs, gated releases
 
-**Status:** ✅ Implemented 2026-11-23: `requirements.lock`, `renovate.json`, gated `publish` job in `.github/workflows/ci.yml`. Maintainer guide: [Releasing & Dependency Updates](../releasing.md). **Owner action:** install the Renovate GitHub App once (see that guide).
+**Status:** ✅ Implemented 2026-11-23: hash-pinned lock (`requirements.in` → `requirements.txt`), gated `publish` job in `.github/workflows/ci.yml`, Dependabot (`.github/dependabot.yml`). Maintainer guide: [Releasing & Dependency Updates](../releasing.md). No owner setup needed. *(Originally planned with Renovate; switched to GitHub's built-in Dependabot so nothing has to be installed.)*
 
 ### What it is
 
@@ -99,9 +99,9 @@ The davey break wasn't caused by anything we changed: discord.py allows `davey>=
 
 ### Pieces
 
-1. **Lockfile**: generate a hash-pinned `requirements.lock` (pip-tools or uv) from `requirements.txt` for everything **except** yt-dlp / yt-dlp-ejs. The Docker build installs from the lock, so the same commit always builds the same image. yt-dlp is still installed unpinned and upgraded at container start.
-2. **Automated update PRs (Renovate)**: a bot opens grouped PRs weekly for Python packages, GitHub Actions and the base image. Each runs CI. You review and merge, or ignore it, and nothing changes. PRs touching `discord.py` or `davey` get a `needs-voice-test` label: play a track on the test bot and check for no `DAVE not ready` warning before merging.
-   - *Renovate* is a free GitHub app; enabling it on the repo is a one-time click plus a `renovate.json` config file. Dependabot (built into GitHub) is the fallback.
+1. **Lockfile**: generate a hash-pinned `requirements.txt` (pip-tools) from `requirements.in` for everything **except** yt-dlp / yt-dlp-ejs. The Docker build installs from the lock, so the same commit always builds the same image. yt-dlp is still installed unpinned and upgraded at container start.
+2. **Automated update PRs (Dependabot)**: GitHub's built-in bot opens grouped PRs weekly for Python packages, GitHub Actions and the base image. Each runs CI. You review and merge, or ignore it, and nothing changes. PRs touching `discord.py` or `davey` get a `needs-voice-test` label: play a track on the test bot and check for no `DAVE not ready` warning before merging.
+   - *Dependabot* is built into GitHub: a `.github/dependabot.yml` file turns it on, with no app to install.
 3. **Make CI meaningful**:
    - fix the ~60 existing ruff lint findings (behaviour-neutral)
    - add a pytest job
@@ -116,7 +116,7 @@ The davey break wasn't caused by anything we changed: discord.py allows `davey>=
 ### Done when
 
 - Docker build uses the lockfile; CI is green on `main` and blocks failures
-- Publish waits for CI; Renovate config is merged and producing PRs
+- Publish waits for CI; Dependabot config is merged and producing PRs
 - `docs/deployment.md` explains the release and rollback flow
 
 ---
@@ -140,7 +140,7 @@ Decision deferred. Revisit after a few months of canary data.
 |---|---|---|---|
 | 1 | Canary + webhook alerts | Create the webhook, set `ALERT_WEBHOOK_URL` | Medium (one PR) |
 | 2 | Lockfile + gated publish + CI fixes | Review PR | Medium (one PR) |
-| 3 | Renovate | Install the Renovate GitHub app once | Small |
+| 3 | Dependabot | None (config file only) | Small |
 | 4 | Versioned releases in production | Switch production to a version tag | Small |
 | 5 | Lavalink evaluation | Decide | Large, optional |
 
@@ -148,6 +148,6 @@ Steps 1 and 2 are independent and can run in parallel.
 
 ## Routine after this is in place
 
-- **Weekly (5 min):** skim and merge Renovate PRs that passed CI; voice-test those labelled `needs-voice-test`.
+- **Weekly (5 min):** skim and merge Dependabot PRs that passed CI; voice-test those labelled `needs-voice-test`.
 - **When an alert fires:** read the failing stage in the alert → run `scripts/pipeline_steps.py` in the container if needed → usually the fix is a yt-dlp release (automatic) or one version bump.
 - **Nothing to do** when yt-dlp ships a release: the bot upgrades and restarts itself when idle.

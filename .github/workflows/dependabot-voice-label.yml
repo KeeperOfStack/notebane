@@ -1,0 +1,55 @@
+name: Flag voice-stack updates
+
+# Dependabot can't label individual groups, so this marks its voice-stack PRs
+# (discord.py / davey / PyNaCl) with `needs-voice-test` and posts the manual
+# playback checklist. davey 0.2.0 once broke all audio while every automated
+# check stayed green, so these need a human ear before merging.
+#
+# Security: pull_request_target runs with a write token in the base-repo
+# context. This job never checks out or executes PR code — it only reads the
+# PR title and calls the GitHub API — and only runs for Dependabot's own PRs.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      contains(github.event.pull_request.title, 'voice-stack')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Ensure label exists
+        run: gh label create needs-voice-test --color D93F0B --description "Play a track on the test bot before merging" --force
+
+      - name: Label PR
+        run: gh pr edit "$PR" --add-label needs-voice-test
+
+      - name: Post checklist (once)
+        run: |
+          if gh pr view "$PR" --json comments --jq '.comments[].body' | grep -q 'Voice-stack update'; then
+            echo "checklist already posted"; exit 0
+          fi
+          gh pr comment "$PR" --body "$(cat <<'MD'
+          ⚠️ **Voice-stack update: test playback before merging.**
+
+          CI can't hear audio. A davey release once broke all sound while every check stayed green.
+
+          - [ ] Run this branch as the test bot: `git fetch origin && git checkout <this-branch> && docker compose -f docker-compose.test.yml up -d --build`
+          - [ ] `/play` a track in a voice channel and **confirm you can hear it**
+          - [ ] `docker logs notebane-test 2>&1 | grep -E "DAVE not ready|canary"`: no `DAVE not ready`, and `canary PASS` about 2 min after start
+
+          Details: `docs/releasing.md` → *Voice test checklist*.
+          MD
+          )"

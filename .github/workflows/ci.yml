@@ -51,12 +51,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            requirements.lock
+            requirements.txt
             requirements-dev.txt
 
       - name: Install locked dependencies + test tools
         run: |
-          pip install --require-hashes -r requirements.lock
+          pip install --require-hashes -r requirements.txt
           pip install --pre -r requirements-ytdlp.txt
           pip install pytest==$(grep -oP '^pytest==\K.*' requirements-dev.txt) \
                       pytest-asyncio==$(grep -oP '^pytest-asyncio==\K.*' requirements-dev.txt)

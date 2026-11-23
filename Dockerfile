@@ -9,11 +9,12 @@ WORKDIR /build
 # Build deps for PyNaCl C extension
 RUN apk add --no-cache gcc musl-dev libffi-dev
 
-COPY requirements.lock requirements-ytdlp.txt ./
+COPY requirements.txt requirements-ytdlp.txt ./
 # 1. Everything except yt-dlp: exact versions + hashes from the lockfile, so the
-#    same commit always builds the same image (a loose transitive range once
+#    same commit always builds the same image (requirements.txt is compiled
+#    from requirements.in) (a loose transitive range once
 #    pulled in davey 0.2.0 and silently broke voice).
-RUN pip install --no-cache-dir --prefix=/install --require-hashes -r requirements.lock
+RUN pip install --no-cache-dir --prefix=/install --require-hashes -r requirements.txt
 # 2. yt-dlp floats on purpose (YouTube breaks old versions within weeks); --pre
 #    allows nightlies. entrypoint.sh upgrades it again on every start.
 RUN pip install --no-cache-dir --prefix=/install --pre -r requirements-ytdlp.txt
