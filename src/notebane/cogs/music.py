@@ -12,16 +12,22 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
+from notebane.cogs.voice import _connect_to_channel, assert_user_in_voice
 from notebane.cookies import get_guild_cookiefile
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayer, GuildPlayerManager, Track
-from notebane.ytdl import YTDLError, resolve, resolve_playlist, looks_like_playlist, strip_mix_context
 from notebane.restore_db import clear_snapshot as _clear_restore_snapshot
 from notebane.routing import (
     get_players_for_channel,
     release_channel,
     resolve_players_for_channel,
+)
+from notebane.ytdl import (
+    YTDLError,
+    looks_like_playlist,
+    resolve,
+    resolve_playlist,
+    strip_mix_context,
 )
 
 log = logging.getLogger("notebane.music")
@@ -50,7 +56,7 @@ def _now_playing_embed(track: Track, *, paused: bool = False) -> discord.Embed:
 class NowPlayingView(discord.ui.View):
     """Persistent control buttons attached to the Now Playing message."""
 
-    def __init__(self, player: "GuildPlayer", players: "GuildPlayerManager") -> None:
+    def __init__(self, player: GuildPlayer, players: GuildPlayerManager) -> None:
         super().__init__(timeout=None)
         self.player = player
         self.players = players
@@ -433,15 +439,16 @@ class MusicCog(commands.Cog, name="Music"):
         # (should not happen with SEM_LIMIT=1, but guards against edge cases).
         async with cursor_lock:
             while cursor < len(results):
-                if results[cursor] is not None:
-                    # Same cancel guard as above
-                    if not (asyncio.current_task() and asyncio.current_task().cancelled()):  # type: ignore[union-attr]
-                        if not insert_next:
-                            await player.queue.put(results[cursor])  # type: ignore[arg-type]
-                        else:
-                            pos = min(pn_insert_pos, player.queue.qsize())
-                            player.insert_at(pos, results[cursor])  # type: ignore[arg-type]
-                            pn_insert_pos += 1
+                # Same cancel guard as above
+                if results[cursor] is not None and not (
+                    asyncio.current_task() and asyncio.current_task().cancelled()  # type: ignore[union-attr]
+                ):
+                    if not insert_next:
+                        await player.queue.put(results[cursor])  # type: ignore[arg-type]
+                    else:
+                        pos = min(pn_insert_pos, player.queue.qsize())
+                        player.insert_at(pos, results[cursor])  # type: ignore[arg-type]
+                        pn_insert_pos += 1
                 cursor += 1
 
         # Send a completion summary to the text channel
@@ -700,7 +707,6 @@ class MusicCog(commands.Cog, name="Music"):
     @app_commands.describe(query="YouTube mix/radio URL (the long link with list=RD... from right-clicking a track)")
     async def playytmix(self, interaction: discord.Interaction, query: str) -> None:
         """Intentionally load a full YouTube auto-mix — bypasses the mix-strip that /play applies."""
-        t_start = time.perf_counter()
         await interaction.response.defer()
 
         player = await self._ensure_player(interaction)
@@ -799,7 +805,6 @@ class MusicCog(commands.Cog, name="Music"):
     @app_commands.describe(query="YouTube mix/radio URL (the long link with list=RD... from right-clicking a track)")
     async def playytmixnext(self, interaction: discord.Interaction, query: str) -> None:
         """Intentionally insert a full YouTube auto-mix after the current track — bypasses mix-strip."""
-        t_start = time.perf_counter()
         await interaction.response.defer()
 
         player = await self._ensure_player(interaction)

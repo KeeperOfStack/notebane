@@ -88,7 +88,7 @@ def validate_name(name: str) -> str:
 
 # ── Track serialisation helpers ───────────────────────────────────────────────
 
-def _track_to_row(track: "Track", playlist_id: int, position: int) -> tuple:
+def _track_to_row(track: Track, playlist_id: int, position: int) -> tuple:
     headers_json = json.dumps(track.http_headers) if track.http_headers else None
     return (
         playlist_id,
@@ -103,7 +103,7 @@ def _track_to_row(track: "Track", playlist_id: int, position: int) -> tuple:
     )
 
 
-def _row_to_track(row: tuple) -> "Track":
+def _row_to_track(row: tuple) -> Track:
     from notebane.player import Track
     _, _, _, title, url, webpage_url, duration, thumbnail, requester, headers_json = row
     http_headers = json.loads(headers_json) if headers_json else None
@@ -155,7 +155,7 @@ def list_playlists(user_id: int) -> list[dict]:
     return [{"id": r[0], "name": r[1], "track_count": r[2], "updated_at": r[3]} for r in rows]
 
 
-def create_playlist(user_id: int, name: str, tracks: list["Track"]) -> int:
+def create_playlist(user_id: int, name: str, tracks: list[Track]) -> int:
     """Create a new playlist. Raises PlaylistError if name taken or limits exceeded.
     Returns the new playlist_id.
     """
@@ -189,7 +189,7 @@ def create_playlist(user_id: int, name: str, tracks: list["Track"]) -> int:
     return playlist_id
 
 
-def overwrite_playlist(user_id: int, name: str, tracks: list["Track"]) -> int:
+def overwrite_playlist(user_id: int, name: str, tracks: list[Track]) -> int:
     """Overwrite an existing playlist's tracks. Creates it if it doesn't exist.
     Returns the playlist_id.
     """
@@ -222,7 +222,7 @@ def overwrite_playlist(user_id: int, name: str, tracks: list["Track"]) -> int:
     return playlist_id
 
 
-def get_playlist(user_id: int, name: str) -> list["Track"] | None:
+def get_playlist(user_id: int, name: str) -> list[Track] | None:
     """Return the ordered track list for a playlist, or None if not found."""
     with _conn() as con:
         pid_row = con.execute(
@@ -249,7 +249,7 @@ def delete_playlist(user_id: int, name: str) -> bool:
     return cur.rowcount > 0
 
 
-def update_playlist_tracks(playlist_id: int, tracks: list["Track"]) -> None:
+def update_playlist_tracks(playlist_id: int, tracks: list[Track]) -> None:
     """Full replace of all tracks in a playlist (used by editplaylist after mutations)."""
     if len(tracks) > MAX_TRACKS_PER_PLAYLIST:
         raise PlaylistError(f"Playlist too large — maximum {MAX_TRACKS_PER_PLAYLIST} tracks.")
@@ -264,7 +264,7 @@ def update_playlist_tracks(playlist_id: int, tracks: list["Track"]) -> None:
         con.execute("UPDATE user_playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
 
 
-def get_playlist_tracks_by_id(playlist_id: int) -> list["Track"]:
+def get_playlist_tracks_by_id(playlist_id: int) -> list[Track]:
     """Load tracks for a known playlist_id (used by editplaylist)."""
     with _conn() as con:
         rows = con.execute(

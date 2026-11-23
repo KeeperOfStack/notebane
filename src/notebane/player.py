@@ -6,14 +6,11 @@ import asyncio
 import logging
 import shlex
 import time
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
 from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import discord
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger("notebane.player")
 
@@ -120,7 +117,7 @@ class Track:
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
     @classmethod
-    def make_stub(cls, entry: dict, requester: str = "unknown") -> "Track":
+    def make_stub(cls, entry: dict, requester: str = "unknown") -> Track:
         """Build an unresolved Track from a yt-dlp flat playlist entry.
 
         Uses only metadata available from flat extraction (no yt-dlp resolve call).
@@ -348,8 +345,8 @@ class GuildPlayer:
             try:
                 from notebane.metrics import record_track_played
                 record_track_played()
-            except Exception:
-                pass
+            except Exception:  # metrics are optional, never block playback
+                log.debug("record_track_played failed", exc_info=True)
 
             packets = await self._stream(track)
             if packets is None:  # FFmpeg couldn't even be spawned
@@ -607,7 +604,7 @@ class GuildPlayer:
                 dq.clear()
                 dq.extend(dq_list)
                 log.debug("[guild=%d] pre-resolved %r at pos %d", self.guild_id, stub.title, idx)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; the play loop JIT-resolves on failure
             log.debug(
                 "[guild=%d] presolve failed for %r — play loop will JIT resolve",
                 self.guild_id, stub.webpage_url,

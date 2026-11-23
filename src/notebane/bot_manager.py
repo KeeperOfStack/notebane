@@ -93,7 +93,7 @@ class BotManager:
     # ── Construction ─────────────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "BotManager":
+    def from_env(cls, env: dict[str, str] | None = None) -> BotManager:
         """Parse BOT_NN_TOKEN / BOT_NN_ID pairs from *env* (defaults to os.environ).
 
         Rules:

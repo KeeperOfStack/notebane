@@ -114,7 +114,9 @@ class TestGuildSeesOneBotOfMany:
 
         result = await resolve_players_for_channel(bot, ix, guild_id=100, channel_id=5001)
 
-        assert result is pool.bots[1].client.players  # Bot 2's manager
+        players, client = result  # Bot 2's manager
+        assert players is pool.bots[1].client.players
+        assert client is pool.bots[1].client
         ix.response.send_message.assert_not_called()
 
 
@@ -182,7 +184,9 @@ class TestAllBotsBusy:
         ix = _make_interaction()
         result = await resolve_players_for_channel(bot, ix, guild_id=100, channel_id=5003)
 
-        assert result is pool.bots[0].client.players  # bot 1 reassigned
+        players, client = result  # bot 1 reassigned
+        assert players is pool.bots[0].client.players
+        assert client is pool.bots[0].client
         ix.response.send_message.assert_not_called()
 
     async def test_busy_message_sent_ephemerally(self):

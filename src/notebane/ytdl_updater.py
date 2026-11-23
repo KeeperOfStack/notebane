@@ -20,7 +20,7 @@ import logging
 import os
 import re
 import sys
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import yt_dlp
 

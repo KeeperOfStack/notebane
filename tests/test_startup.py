@@ -112,7 +112,10 @@ class TestMetricsOnlyOnBot1:
         async def _fake_start_metrics(b, p):
             return mock_task
 
-        async def _fake_start_updater():
+        async def _fake_start_updater(**kwargs):
+            return mock_task
+
+        async def _fake_start_canary():
             return mock_task
 
         with (
@@ -124,11 +127,13 @@ class TestMetricsOnlyOnBot1:
             patch("notebane.player.GuildPlayerManager"),
             patch("notebane.metrics.start_metrics_server", _fake_start_metrics),
             patch("notebane.ytdl_updater.start_ytdlp_updater", _fake_start_updater),
+            patch("notebane.canary.start_canary", _fake_start_canary),
         ):
             await bot.setup_hook()
 
         assert bot._metrics_task is mock_task
         assert bot._ytdlp_updater_task is mock_task
+        assert bot._canary_task is mock_task
 
     @pytest.mark.asyncio
     async def test_bot2_skips_metrics(self):
@@ -149,12 +154,14 @@ class TestMetricsOnlyOnBot1:
             patch("notebane.player.GuildPlayerManager"),
             patch("notebane.metrics.start_metrics_server", _should_not_call),
             patch("notebane.ytdl_updater.start_ytdlp_updater", _should_not_call),
+            patch("notebane.canary.start_canary", _should_not_call),
         ):
             await bot.setup_hook()
 
         assert not metrics_called
         assert bot._metrics_task is None
         assert bot._ytdlp_updater_task is None
+        assert bot._canary_task is None
 
 
 # ── _run_bot error isolation ──────────────────────────────────────────────────
