@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import discord
-    from notebane.__main__ import Notebane
+
     from notebane.player import GuildPlayerManager
 
 from typing import Any
@@ -48,7 +48,7 @@ ALL_BUSY_MSG = (
 )
 
 
-async def _send(interaction: "discord.Interaction", msg: str) -> None:
+async def _send(interaction: discord.Interaction, msg: str) -> None:
     """Send an ephemeral message whether or not the interaction is deferred."""
     if not interaction.response.is_done():
         await interaction.response.send_message(msg, ephemeral=True)
@@ -59,7 +59,7 @@ async def _send(interaction: "discord.Interaction", msg: str) -> None:
 def get_players_for_channel(
     bot: Any,
     channel_id: int,
-) -> "GuildPlayerManager | None":
+) -> GuildPlayerManager | None:
     """Return the GuildPlayerManager for the bot already in *channel_id*.
 
     Does NOT assign a new bot — only looks up an existing assignment.
@@ -78,10 +78,10 @@ def get_players_for_channel(
 
 async def resolve_players_for_channel(
     bot: Any,
-    interaction: "discord.Interaction",
+    interaction: discord.Interaction,
     guild_id: int,
     channel_id: int,
-) -> "tuple[GuildPlayerManager, Any] | None":
+) -> tuple[GuildPlayerManager, Any] | None:
     """Return ``(GuildPlayerManager, assigned_bot_client)`` for *channel_id*.
 
     Single-bot: returns ``(bot.players, bot)`` immediately.
@@ -143,7 +143,7 @@ def release_channel(bot: Any, channel_id: int) -> None:
 def get_all_players_for_guild(
     bot: Any,
     guild_id: int,
-) -> "list[GuildPlayerManager]":
+) -> list[GuildPlayerManager]:
     """Return all GuildPlayerManagers that have active sessions in *guild_id*.
 
     Single-bot: returns [bot.players].

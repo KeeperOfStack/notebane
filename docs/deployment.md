@@ -393,6 +393,22 @@ The same alert repeats at most once an hour (`ALERT_RATE_LIMIT_MINUTES`). Alerts
 
 ---
 
+## Image Tags, Updates & Rollback
+
+Images are published to `ghcr.io/keeperofstack/notebane` **only after lint, tests and a build check pass**.
+
+| Tag | Moves? | Use it for |
+|---|---|---|
+| `:latest` | Every merge to `main` | Following development; simplest setup |
+| `:1.5.0` / `:1.5` | Only on a release tag | **Recommended for production**: you choose when to upgrade |
+| `:sha-51fbcda` | Never | Rolling back to an exact known-good build |
+
+**Rolling back:** change `image:` (or the `docker run` tag) to the last good `:sha-…` or version tag and recreate the container. Your volumes are untouched.
+
+**yt-dlp is the exception:** whatever tag you run, the container upgrades yt-dlp to the newest release on start (and restarts itself when idle if a newer one ships), because YouTube breaks old versions within weeks. Set `YTDL_AUTO_UPDATE=0` to freeze it, e.g. while debugging. Maintainers: see [Releasing & Dependency Updates](releasing.md).
+
+---
+
 ## Optional: Automatic Updates with Watchtower
 
 If you'd prefer the container to update itself automatically when a new image is published to GHCR, you can add [Watchtower](https://containrrr.dev/watchtower/) as a companion container.

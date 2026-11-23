@@ -1,7 +1,7 @@
 # Future-proofing Plan
 
 **Date:** 2026-11-23
-**Status:** 📋 Planned: nothing in this document is built yet unless marked ✅.
+**Status:** Workstreams 1 and 2 ✅ implemented 2026-11-23; Workstream 3 deferred.
 **Context:** [Playback outage post-mortem](../20261123-0300-playback-outage-postmortem/README.md)
 
 ## Goal
@@ -85,7 +85,7 @@ Treat the webhook URL like a password: anyone who has it can post into that chan
 
 ## Workstream 2 — Locked dependencies, update PRs, gated releases
 
-**Status:** 🚧 In progress.
+**Status:** ✅ Implemented 2026-11-23: `requirements.lock`, `renovate.json`, gated `publish` job in `.github/workflows/ci.yml`. Maintainer guide: [Releasing & Dependency Updates](../releasing.md). **Owner action:** install the Renovate GitHub App once (see that guide).
 
 ### What it is
 

@@ -9,10 +9,14 @@ WORKDIR /build
 # Build deps for PyNaCl C extension
 RUN apk add --no-cache gcc musl-dev libffi-dev
 
-COPY requirements.txt .
-# --pre allows yt-dlp nightly (needed for clearer "cookies invalid" error messages
-# that the 2026.6.9 stable release buries under "Sign in to confirm your age")
-RUN pip install --no-cache-dir --pre --prefix=/install -r requirements.txt
+COPY requirements.lock requirements-ytdlp.txt ./
+# 1. Everything except yt-dlp: exact versions + hashes from the lockfile, so the
+#    same commit always builds the same image (a loose transitive range once
+#    pulled in davey 0.2.0 and silently broke voice).
+RUN pip install --no-cache-dir --prefix=/install --require-hashes -r requirements.lock
+# 2. yt-dlp floats on purpose (YouTube breaks old versions within weeks); --pre
+#    allows nightlies. entrypoint.sh upgrades it again on every start.
+RUN pip install --no-cache-dir --prefix=/install --pre -r requirements-ytdlp.txt
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime — minimal Alpine + FFmpeg only

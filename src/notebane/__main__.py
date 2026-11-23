@@ -117,7 +117,7 @@ class Notebane(commands.AutoShardedBot):
         self,
         *,
         bot_number: int = 1,
-        bot_manager: "BotManager | None" = None,
+        bot_manager: BotManager | None = None,
     ) -> None:
         intents = discord.Intents.default()
         intents.voice_states = True
@@ -152,9 +152,9 @@ class Notebane(commands.AutoShardedBot):
         from notebane.cookies import ensure_cookies_dir
         from notebane.metrics import start_metrics_server
         from notebane.player import GuildPlayerManager
-        from notebane.ytdl_updater import start_ytdlp_updater
-        from notebane.restore_db import init_db, purge_expired
         from notebane.playlist_db import init_playlist_tables
+        from notebane.restore_db import init_db, purge_expired
+        from notebane.ytdl_updater import start_ytdlp_updater
 
         self.players: GuildPlayerManager = GuildPlayerManager()
 
@@ -204,7 +204,7 @@ class Notebane(commands.AutoShardedBot):
             self._ytdlp_updater_task = None
             self._canary_task = None
 
-    def _pool_clients(self) -> list["Notebane"]:
+    def _pool_clients(self) -> list[Notebane]:
         if self.bot_manager is None:
             return [self]
         return [e.client for e in self.bot_manager.bots if e.client is not None]
@@ -238,7 +238,7 @@ class Notebane(commands.AutoShardedBot):
                         "Bot %d: guild-synced commands to %s (%d)",
                         self._bot_number, guild.name, guild.id,
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — one guild failing must not stop the others
                     log.warning(
                         "Bot %d: failed to guild-sync to %s (%d): %s",
                         self._bot_number, guild.name, guild.id, exc,
@@ -256,7 +256,7 @@ class Notebane(commands.AutoShardedBot):
                         "Bot %d: cleared commands from %s (%d)",
                         self._bot_number, guild.name, guild.id,
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — one guild failing must not stop the others
                     log.warning(
                         "Bot %d: failed to clear commands from %s (%d): %s",
                         self._bot_number, guild.name, guild.id, exc,
@@ -283,7 +283,7 @@ class Notebane(commands.AutoShardedBot):
                 "Bot %d: guild-synced commands to new guild %s (%d)",
                 self._bot_number, guild.name, guild.id,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — never crash the gateway event handler
             log.warning(
                 "Bot %d: failed to guild-sync on join to %s (%d): %s",
                 self._bot_number, guild.name, guild.id, exc,

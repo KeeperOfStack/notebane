@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.playlist_db import (
     MAX_TRACKS_PER_PLAYLIST,
     PlaylistError,
@@ -25,11 +25,7 @@ from notebane.playlist_db import (
     update_playlist_tracks,
     validate_name,
 )
-from notebane.player import GuildPlayer, GuildPlayerManager, Track
 from notebane.ytdl import YTDLError, resolve
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger("notebane.playlists")
 
@@ -52,8 +48,8 @@ async def _load_playlist_into_player(
     Stubs are enqueued instantly (no yt-dlp calls). Stream URLs are resolved
     JIT in the play loop just before each track plays.
     """
-    from notebane.restore_db import clear_snapshot as _clear_restore
     from notebane.cookies import get_guild_cookiefile
+    from notebane.restore_db import clear_snapshot as _clear_restore
 
     player.record_mutation()
     _clear_restore(player.guild_id, player.channel_id)
@@ -157,7 +153,7 @@ class PlaylistSelectView(discord.ui.View):
         self,
         user_id: int,
         playlists: list[dict],
-        cog: "PlaylistCog",
+        cog: PlaylistCog,
     ) -> None:
         super().__init__(timeout=60)
         self._user_id = user_id
@@ -199,7 +195,7 @@ class AddTrackModal(discord.ui.Modal, title="Add Track"):
         max_length=500,
     )
 
-    def __init__(self, view: "PlaylistEditorView") -> None:
+    def __init__(self, view: PlaylistEditorView) -> None:
         super().__init__()
         self._view = view
 
@@ -224,7 +220,7 @@ class RemoveTrackModal(discord.ui.Modal, title="Remove Track"):
         max_length=6,
     )
 
-    def __init__(self, view: "PlaylistEditorView") -> None:
+    def __init__(self, view: PlaylistEditorView) -> None:
         super().__init__()
         self._view = view
 
@@ -244,8 +240,7 @@ class RemoveTrackModal(discord.ui.Modal, title="Remove Track"):
         update_playlist_tracks(self._view.playlist_id, self._view.tracks)
         # Adjust page if needed
         max_page = max(1, math.ceil(len(self._view.tracks) / TRACKS_PER_EDITOR_PAGE))
-        if self._view.page > max_page:
-            self._view.page = max_page
+        self._view.page = min(self._view.page, max_page)
         await interaction.response.defer(ephemeral=True)
         await self._view.refresh(interaction, note=f"🗑️ Removed **{removed.title}**.")
 
@@ -254,7 +249,7 @@ class MoveTrackModal(discord.ui.Modal, title="Move Track"):
     from_pos = discord.ui.TextInput(label="Move FROM position", placeholder="e.g. 12", max_length=6)
     to_pos = discord.ui.TextInput(label="Move TO position", placeholder="e.g. 3", max_length=6)
 
-    def __init__(self, view: "PlaylistEditorView") -> None:
+    def __init__(self, view: PlaylistEditorView) -> None:
         super().__init__()
         self._view = view
 
@@ -333,7 +328,7 @@ class PlaylistEditorView(discord.ui.View):
             try:
                 await self._message.edit(embed=embed, view=self)
                 await interaction.followup.send("\u200b", ephemeral=True, delete_after=0)  # type: ignore[call-overload]
-            except Exception:
+            except Exception:  # noqa: BLE001 — original message gone or uneditable; fall back to a new one
                 await interaction.followup.send(embed=embed, view=self, ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, view=self, ephemeral=True)
@@ -363,8 +358,8 @@ class PlaylistEditorView(discord.ui.View):
                     content="⏱️ Editor session expired. Run `/editplaylist` again.",
                     view=self,
                 )
-            except Exception:
-                pass
+            except Exception:  # cosmetic refresh; the message may already be gone
+                log.debug("playlist editor expiry edit failed", exc_info=True)
 
     @discord.ui.button(emoji="◀", style=discord.ButtonStyle.secondary, custom_id="ep_prev", disabled=True)
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -441,8 +436,8 @@ class PlaylistCog(commands.Cog, name="Playlists"):
         self, interaction: discord.Interaction
     ) -> GuildPlayer | None:
         """Get the active player, or join the user's current VC if not connected."""
-        from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
         from notebane.cogs.music import MusicCog
+        from notebane.cogs.voice import _connect_to_channel, assert_user_in_voice
 
         if not interaction.guild or not interaction.guild_id:
             await interaction.followup.send("❌ Server-only command.", ephemeral=True)

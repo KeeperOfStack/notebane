@@ -7,11 +7,11 @@ import logging
 from functools import partial
 
 import discord
+import yt_dlp
 from discord import app_commands
 from discord.ext import commands
-import yt_dlp
 
-from notebane.cogs.voice import assert_user_in_voice, _connect_to_channel
+from notebane.cogs.voice import _connect_to_channel, assert_user_in_voice
 from notebane.embeds import error as err_embed
 from notebane.player import GuildPlayerManager
 from notebane.ytdl import YTDL_OPTS, YTDLError

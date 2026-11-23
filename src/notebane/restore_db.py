@@ -15,9 +15,10 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from notebane.player import Track
@@ -70,20 +71,20 @@ def init_db() -> None:
 
 # ── Track serialisation ───────────────────────────────────────────────────────
 
-def _track_to_json(track: "Track") -> str:
+def _track_to_json(track: Track) -> str:
     return json.dumps(asdict(track))
 
 
-def _track_from_json(s: str) -> "Track":
+def _track_from_json(s: str) -> Track:
     from notebane.player import Track
     return Track(**json.loads(s))
 
 
-def _queue_to_json(tracks: list["Track"]) -> str:
+def _queue_to_json(tracks: list[Track]) -> str:
     return json.dumps([asdict(t) for t in tracks])
 
 
-def _queue_from_json(s: str) -> list["Track"]:
+def _queue_from_json(s: str) -> list[Track]:
     from notebane.player import Track
     return [Track(**d) for d in json.loads(s)]
 
@@ -93,8 +94,8 @@ def _queue_from_json(s: str) -> list["Track"]:
 def save_snapshot(
     guild_id: int,
     channel_id: int,
-    current_track: "Track | None",
-    queue: list["Track"],
+    current_track: Track | None,
+    queue: list[Track],
 ) -> None:
     """Upsert a restore snapshot. Called from player.stop() / player.disconnect()."""
     current_json = _track_to_json(current_track) if current_track else None
@@ -120,7 +121,7 @@ def save_snapshot(
 def load_snapshot(
     guild_id: int,
     channel_id: int,
-) -> tuple["Track | None", list["Track"]] | None:
+) -> tuple[Track | None, list[Track]] | None:
     """Return (current_track, queue) or None if no valid snapshot exists."""
     with _conn() as con:
         row = con.execute(

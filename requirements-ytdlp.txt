@@ -1,0 +1,5 @@
+# yt-dlp is deliberately NOT pinned or locked: YouTube changes break old
+# versions within weeks. [default] pulls the matching yt-dlp-ejs (JS challenge
+# solver). Installed with --pre (nightly builds) at image build time, and
+# entrypoint.sh upgrades it again on every container start.
+yt-dlp[default]>=2026.6.29.234344.dev0

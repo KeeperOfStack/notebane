@@ -206,7 +206,7 @@ class AuthCog(commands.Cog, name="Auth"):
         try:
             raw = await attachment.read()
             content = raw.decode("utf-8")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — any read/decode failure means it isn't a cookies file
             log.warning("Failed to read cookie attachment: %s", exc)
             return
 

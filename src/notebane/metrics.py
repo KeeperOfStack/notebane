@@ -33,6 +33,7 @@ from prometheus_client import (  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from discord.ext.commands import AutoShardedBot
+
     from notebane.player import GuildPlayerManager
 
 log = logging.getLogger("notebane.metrics")

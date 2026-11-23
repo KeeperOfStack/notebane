@@ -34,6 +34,7 @@
 - [🔐 YouTube Login (`/ytlogin`)](docs/ytlogin/README.md) — per-guild cookie upload for age-restricted content
 - [⚡ Quick-Play & Cookie Policy](docs/phase11-quickplay/README.md) — Phase 11 perf initiative: fast paths, parallel resolve, smart-cookie contract, and latency baseline
 - [🩹 Playback Outage Post-mortem (2026-11-23)](docs/20261123-0300-playback-outage-postmortem/README.md) — YouTube 403s, broken FFmpeg headers, frozen yt-dlp and silent DAVE voice: how each was found and fixed
+- [🏷️ Releasing & Dependency Updates](docs/releasing.md) — locked dependencies, Renovate PRs, voice-test checklist, versioned releases and rollback
 - [🛡️ Future-proofing Plan (2026-11-23)](docs/20261123-0425-future-proofing-plan/README.md) — playback canary + owner alerts, locked dependencies, gated releases
 
 ---
