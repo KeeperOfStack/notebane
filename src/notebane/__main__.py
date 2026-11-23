@@ -197,9 +197,12 @@ class Notebane(commands.AutoShardedBot):
                 is_idle=self._pool_is_idle,
                 request_restart=self._restart_for_update,
             )
+            from notebane.canary import start_canary
+            self._canary_task = await start_canary()
         else:
             self._metrics_task = None
             self._ytdlp_updater_task = None
+            self._canary_task = None
 
     def _pool_clients(self) -> list["Notebane"]:
         if self.bot_manager is None:
@@ -307,6 +310,8 @@ class Notebane(commands.AutoShardedBot):
         log.info("Bot %d: all voice clients disconnected — closing gateway", self._bot_number)
 
         if task := getattr(self, "_ytdlp_updater_task", None):
+            task.cancel()
+        if task := getattr(self, "_canary_task", None):
             task.cancel()
         if task := getattr(self, "_restore_purge_task", None):
             task.cancel()

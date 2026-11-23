@@ -26,7 +26,7 @@ Notebane depends on three things outside our control: **YouTube** (fights downlo
 
 ## Workstream 1 — Playback canary + owner alerts
 
-*(Suggested task: "Playback canary self-test + owner alert webhook")*
+**Status:** ✅ Implemented 2026-11-23: `src/notebane/canary.py`, `src/notebane/alerts.py`. Setup steps are in the [deployment guide](../deployment.md#owner-alerts--playback-canary).
 
 ### What it is
 
@@ -85,7 +85,7 @@ Treat the webhook URL like a password: anyone who has it can post into that chan
 
 ## Workstream 2 — Locked dependencies, update PRs, gated releases
 
-*(Suggested task: "Lock dependencies, Renovate PRs, gate image publish")*
+**Status:** 🚧 In progress.
 
 ### What it is
 

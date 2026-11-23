@@ -5,6 +5,7 @@
 # Prerequisites:
 #   1. Create .env from .env.example and fill in DISCORD_TOKEN + APPLICATION_ID
 #   2. (Optional) Set METRICS_PORT=9090 and uncomment the ports section below
+#   3. (Recommended) Set ALERT_WEBHOOK_URL in .env for owner alerts — see docs/deployment.md
 
 services:
   notebane:

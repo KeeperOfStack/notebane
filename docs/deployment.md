@@ -98,6 +98,8 @@ docker run -d \
 
 > Set `PUID` and `PGID` to your host user's IDs. Run `id -u` and `id -g` to find them. Defaults (`1000`/`1000`) work for most single-user Linux setups.
 
+> **Recommended:** add `-e ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...` so the bot can tell you when playback breaks. See [Owner Alerts & Playback Canary](#owner-alerts--playback-canary).
+
 **Running a bot pool with docker run:** Add each bot as an additional `-e` pair:
 
 ```bash
@@ -161,6 +163,7 @@ services:
       PUID: 1000
       PGID: 1000
       LOG_FORMAT: json
+      # ALERT_WEBHOOK_URL: https://discord.com/api/webhooks/...   # recommended — see "Owner Alerts"
     volumes:
       - notebane_cookies:/cookies
       - notebane_data:/data
@@ -198,6 +201,7 @@ services:
       PUID: 1000
       PGID: 1000
       LOG_FORMAT: json
+      # ALERT_WEBHOOK_URL: https://discord.com/api/webhooks/...   # recommended — see "Owner Alerts"
     volumes:
       - notebane_cookies:/cookies
       - notebane_data:/data
@@ -253,6 +257,7 @@ APPLICATION_ID=your_application_id_here
 PUID=1000
 PGID=1000
 LOG_LEVEL=INFO
+# ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...   # recommended — see "Owner Alerts"
 ```
 
 **Bot pool** — use numbered pairs instead:
@@ -273,6 +278,7 @@ BOT_05_ID=calypso_app_id_here
 PUID=1000
 PGID=1000
 LOG_LEVEL=INFO
+# ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...   # recommended — see "Owner Alerts"
 ```
 
 > You can run any number of bots from 1 to 5. Just include the pairs you need — gaps are skipped automatically.
@@ -327,10 +333,63 @@ See the [Bot 1 is the primary](#bot-1-is-the-primary--the-others-are-silent-work
 | `LOG_LEVEL` | ❌ | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) |
 | `LOG_FORMAT` | ❌ | `json` | Log format (`json` or `text`) |
 | `SHARD_COUNT` | ❌ | auto | Override Discord's shard count calculation |
-| `METRICS_PORT` | ❌ | — | Expose Prometheus `/metrics` + `/health` on this port |
+| `METRICS_PORT` | ❌ | — | Expose Prometheus `/metrics`, `/health` and `/canary` on this port |
+| `ALERT_WEBHOOK_URL` | ❌ (recommended) | — | Discord channel webhook for owner alerts (playback canary, silent voice, skipped tracks, yt-dlp restarts). See [Owner Alerts](#owner-alerts--playback-canary) |
+| `ALERT_RATE_LIMIT_MINUTES` | ❌ | `60` | Minimum minutes between repeats of the same alert |
+| `CANARY_INTERVAL_HOURS` | ❌ | `6` | How often Bot 1 self-tests playback. `0` disables the canary |
+| `CANARY_URLS` | ❌ | 2 stable videos | Comma-separated videos the canary plays |
+| `CANARY_FAIL_HEALTH` | ❌ | `0` | `1` = `/health` returns 503 while the canary is failing (for external monitors) |
+| `YTDL_AUTO_UPDATE` | ❌ | `1` | Upgrade yt-dlp on every container start and check for new versions every 12 h. `0` = never |
+| `YTDL_AUTO_RESTART` | ❌ | `1` | When a newer yt-dlp is out and nothing is playing, restart to load it (needs `restart: unless-stopped`). `0` = log only |
 | `YTDL_COOKIEFILE` | ❌ | — | Path to Netscape cookies file for age-gated content |
 | `FFMPEG_BEFORE_OPTIONS` | ❌ | — | Extra FFmpeg input flags |
 | `FFMPEG_OPTIONS` | ❌ | — | Extra FFmpeg output flags |
+
+---
+
+## Owner Alerts & Playback Canary
+
+Notebane can tell **you** (the person running it) when playback breaks, instead of you finding out from users. YouTube, yt-dlp and Discord's voice protocol all change without notice; this turns "broken for weeks" into "you get a message within hours, naming what failed".
+
+### How it works
+
+- **Same bot, same container.** Nothing extra to run. Bot 1 (your primary bot) does the checks inside the existing Notebane container, on your server's own network. That matters because YouTube treats home/server IPs differently from cloud test runners.
+- **Playback canary.** About 2 minutes after startup and then every 6 hours, Bot 1 plays ~3 seconds of a couple of well-known YouTube videos through the exact pipeline the player uses (yt-dlp → wait for the stream to become valid → FFmpeg). It doesn't join a voice channel and nobody hears it.
+- **Alerts are posted by a Discord webhook**, not a bot. A webhook is a URL that posts messages into one channel. You don't need to create another bot or give anything new permissions.
+
+### What you'll be alerted about
+
+| Alert | When |
+|---|---|
+| ✅ *Notebane started — playback canary passing* | First canary run after each start (confirms alerts work) |
+| 🔴 *Notebane canary failing — stage `…`* | Canary goes from passing to failing; names the stage (`resolve`, `http 403`, `ffmpeg`, `timeout`) |
+| 🔴 *…still failing* | Reminder while it stays broken (rate-limited) |
+| ✅ *Notebane canary recovered* | Canary passes again |
+| 🔴 *Voice encryption not active* | Bot is "speaking" but Discord's E2EE (DAVE) isn't active, so listeners hear nothing |
+| 🟡 *Track skipped — no audio after retry* | A track failed twice (usually YouTube refusing the stream) |
+| ℹ️ *Restarting to load yt-dlp …* | The auto-updater is restarting the bot for a new yt-dlp |
+
+The same alert repeats at most once an hour (`ALERT_RATE_LIMIT_MINUTES`). Alerts never contain tokens or cookies, and never @mention anyone.
+
+### Setup (about 2 minutes)
+
+1. In your Discord server, create a **private** text channel, e.g. `#notebane-alerts`.
+2. **Edit Channel → Integrations → Webhooks → New Webhook.** Name it (e.g. *Notebane Alerts*), then **Copy Webhook URL**.
+3. Add it to the container's environment:
+   - **docker run:** `-e ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...`
+   - **Portainer / compose:** `ALERT_WEBHOOK_URL: https://discord.com/api/webhooks/...` under `environment:`
+   - **.env:** `ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...`
+4. Recreate the container (a plain restart doesn't pick up new environment variables).
+5. Within ~2 minutes you should see **✅ Notebane started — playback canary passing** in the channel.
+
+> 🔒 Treat the webhook URL like a password: anyone who has it can post into that channel. If it leaks, delete the webhook in Discord and create a new one.
+
+### Checking status yourself
+
+- **Logs:** `docker logs notebane 2>&1 | grep canary` shows `canary PASS` / `canary FAIL … stage=…` lines.
+- **HTTP** (if `METRICS_PORT` is set): `curl http://localhost:9090/canary` returns the last result as JSON. Prometheus gets `notebane_canary_ok`, `notebane_canary_failures_total` and `notebane_canary_last_run_timestamp_seconds`.
+- **External monitor:** set `CANARY_FAIL_HEALTH=1` and point your uptime monitor at `/health`. It returns 503 while the canary is failing.
+- **Manual deep-dive:** `scripts/pipeline_steps.py` runs each playback stage by hand. See the [outage post-mortem](20261123-0300-playback-outage-postmortem/README.md#isolating-the-pipeline).
 
 ---
 
