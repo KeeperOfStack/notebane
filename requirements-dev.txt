@@ -1,6 +1,6 @@
 # Test / lint tooling (CI and local development). Pinned so lint results
 # don't change underneath us when a new ruff release adds rules.
--r requirements.txt
+-r requirements.in
 -r requirements-ytdlp.txt
 pytest==8.4.2
 pytest-asyncio==1.2.0
