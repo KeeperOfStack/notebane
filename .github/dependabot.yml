@@ -20,6 +20,12 @@ updates:
       # every container start (YouTube breaks old versions within weeks).
       - dependency-name: yt-dlp
       - dependency-name: yt-dlp-ejs
+      # davey 0.2.0: DAVE session never reports ready → audio sent unencrypted,
+      # Discord clients drop it (bot "speaks", nobody hears). All CI passes, so
+      # it must be excluded here. Later releases (0.2.1+) still arrive as
+      # voice-stack PRs for a manual playback test.
+      - dependency-name: davey
+        versions: ["0.2.0"]
     groups:
       # discord.py / davey / PyNaCl together. These PRs get the
       # `needs-voice-test` label + checklist (dependabot-voice-label.yml):
