@@ -97,6 +97,13 @@ def _apply_env_overrides() -> None:
 # Bot
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Set when the yt-dlp watcher shuts the bots down to load a newer version.
+_RESTART_REQUESTED = False
+# Exit code used for that restart (EX_TEMPFAIL) — non-zero so on-failure
+# restart policies also bring the bot back.
+RESTART_EXIT_CODE = 75
+
+
 class Notebane(commands.AutoShardedBot):
     """Main bot class with AutoSharding for 100+ guild scale.
 
@@ -186,10 +193,34 @@ class Notebane(commands.AutoShardedBot):
             from notebane.metrics import start_metrics_server
             from notebane.ytdl_updater import start_ytdlp_updater
             self._metrics_task = await start_metrics_server(self, self.players)
-            self._ytdlp_updater_task = await start_ytdlp_updater()
+            self._ytdlp_updater_task = await start_ytdlp_updater(
+                is_idle=self._pool_is_idle,
+                request_restart=self._restart_for_update,
+            )
         else:
             self._metrics_task = None
             self._ytdlp_updater_task = None
+
+    def _pool_clients(self) -> list["Notebane"]:
+        if self.bot_manager is None:
+            return [self]
+        return [e.client for e in self.bot_manager.bots if e.client is not None]
+
+    def _pool_is_idle(self) -> bool:
+        """True when no bot in the pool has an active voice player."""
+        return all(
+            getattr(getattr(b, "players", None), "total", 0) == 0
+            for b in self._pool_clients()
+        )
+
+    async def _restart_for_update(self) -> None:
+        """Close every bot so main() exits and Docker restarts the container."""
+        global _RESTART_REQUESTED
+        _RESTART_REQUESTED = True
+        await asyncio.gather(
+            *[b.close() for b in self._pool_clients() if not b.is_closed()],
+            return_exceptions=True,
+        )
 
     async def on_ready(self) -> None:
         # Only Bot 1 registers slash commands — pool bots (2-5) are invisible
@@ -342,6 +373,10 @@ async def main() -> None:
     for entry, result in zip(pool.bots, results):
         if isinstance(result, Exception) and not isinstance(result, (KeyboardInterrupt, SystemExit)):
             log.error("Bot %d exited with error: %s", entry.number, result)
+
+    if _RESTART_REQUESTED:
+        log.info("Exiting with code %d so the container restarts on the new yt-dlp", RESTART_EXIT_CODE)
+        sys.exit(RESTART_EXIT_CODE)
 
 
 if __name__ == "__main__":

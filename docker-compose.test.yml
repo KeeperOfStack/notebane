@@ -1,0 +1,18 @@
+# Test-only compose: single-bot, debug logging, no resource limits
+services:
+  notebane-test:
+    build: .
+    image: notebane:test
+    container_name: notebane-test
+    restart: "no"
+    env_file:
+      - .env.test
+    volumes:
+      - ./cookies:/cookies
+      - ./data:/data
+      - ./scripts:/app/scripts
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"

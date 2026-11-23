@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 from collections import deque
@@ -23,6 +25,43 @@ FFMPEG_BEFORE_OPTIONS = (
 )
 FFMPEG_OPTIONS = "-vn"
 
+def build_before_options(base: str, http_headers: dict[str, str] | None) -> str:
+    """Append yt-dlp's required HTTP headers to FFmpeg's input options.
+
+    FFmpeg keeps only the LAST ``-headers`` option it is given, so every
+    header must go into a single ``-headers`` value, each line terminated by
+    a real CRLF. The value is shell-quoted because discord.py runs
+    ``shlex.split`` over before_options. Without this, YouTube stream URLs
+    from clients like ANDROID_VR get HTTP 403 (User-Agent never sent).
+    """
+    if not http_headers:
+        return base
+    header_block = "".join(f"{k}: {v}\r\n" for k, v in http_headers.items())
+    return f"{base} -headers {shlex.quote(header_block)}"
+
+
+# Upper bound on how long we'll hold playback for YouTube's availability delay.
+MAX_AVAILABILITY_WAIT = 30.0
+
+
+async def wait_until_available(track: "Track") -> None:
+    """Sleep until YouTube will serve the track's stream URL.
+
+    YouTube now returns HTTP 403 for a freshly issued stream URL until its
+    ``available_at`` time (yt-dlp's own downloader sleeps for this too —
+    "Sleeping N seconds as required by the site"). Handing the URL to FFmpeg
+    immediately makes it fail with exit code 8.
+    """
+    if not track.available_at:
+        return
+    delay = track.available_at - time.time() + 0.5  # small margin for clock skew
+    if delay <= 0:
+        return
+    delay = min(delay, MAX_AVAILABILITY_WAIT)
+    log.debug("waiting %.1fs for stream availability: %s", delay, track.title)
+    await asyncio.sleep(delay)
+
+
 # Undo/redo history depth per voice session
 UNDO_DEPTH = 10
 
@@ -39,6 +78,9 @@ class Track:
     requester: str = "unknown"
     http_headers: dict[str, str] | None = None  # headers yt-dlp says to send (User-Agent etc.)
     resolved: bool = True  # False = stub; url is not yet a real stream URL
+    # Unix time before which YouTube answers the stream URL with HTTP 403
+    # (yt-dlp's "available_at"; usually a few seconds after resolve).
+    available_at: float | None = None
 
     def duration_fmt(self) -> str:
         """Return HH:MM:SS or MM:SS string, or '∞' for streams."""
@@ -140,6 +182,35 @@ class GuildPlayer:
         if self._play_task is None or self._play_task.done():
             self._play_task = asyncio.get_event_loop().create_task(self._play_loop())
 
+    def _check_voice_encryption(self) -> None:
+        """Warn when DAVE (Discord E2EE voice) is required but we can't encrypt.
+
+        In that state discord.py sends raw Opus, Discord clients drop it, and
+        users see the bot "speaking" with no sound. Seen with davey 0.2.0.
+        """
+        try:
+            conn = getattr(self.voice_client, "_connection", None)
+            dave = getattr(conn, "dave_session", None)
+            version = getattr(conn, "dave_protocol_version", 0)
+            can_encrypt = getattr(conn, "can_encrypt", None)
+            info = {
+                "dave_version": version,
+                "can_encrypt": can_encrypt,
+                "ready": getattr(dave, "ready", None),
+                "status": getattr(dave, "status", None),
+                "epoch": getattr(dave, "epoch", None),
+            }
+            if version and not can_encrypt:
+                log.warning(
+                    "[guild=%d] DAVE not ready — audio is being sent unencrypted and "
+                    "listeners will hear nothing. Check the davey version. %s",
+                    self.guild_id, info,
+                )
+            else:
+                log.debug("[guild=%d] voice encryption ok: %s", self.guild_id, info)
+        except Exception:
+            log.debug("[guild=%d] voice encryption check failed", self.guild_id, exc_info=True)
+
     def _after_play(self, error: Exception | None) -> None:
         """Called by discord.py in a thread when a track finishes."""
         if error:
@@ -201,17 +272,13 @@ class GuildPlayer:
             except Exception:
                 pass
 
+            await wait_until_available(track)
+
             try:
                 # Build the before_options with any headers yt-dlp requires
                 # (e.g. User-Agent for ANDROID_VR client URLs — without these
                 # YouTube returns HTTP 403 and FFmpeg exits with code 8).
-                before_opts = FFMPEG_BEFORE_OPTIONS
-                if track.http_headers:
-                    header_str = "".join(
-                        f' -headers "{k}: {v}\\r\\n"'
-                        for k, v in track.http_headers.items()
-                    )
-                    before_opts = before_opts + header_str
+                before_opts = build_before_options(FFMPEG_BEFORE_OPTIONS, track.http_headers)
                 source = discord.FFmpegOpusAudio(
                     track.url,
                     before_options=before_opts,
@@ -228,8 +295,13 @@ class GuildPlayer:
             # so the JIT resolve in the next loop iteration is often a no-op.
             self._start_presolve()
 
-            # Wait for this track to finish (or be stopped)
-            await self._track_done.wait()
+            # Wait for this track to finish (or be stopped). A few seconds in,
+            # verify E2EE voice is actually encrypting.
+            try:
+                await asyncio.wait_for(asyncio.shield(self._track_done.wait()), timeout=5.0)
+            except TimeoutError:
+                self._check_voice_encryption()
+                await self._track_done.wait()
 
             # If previous() triggered this stop, skip all loop/history logic —
             # the queue has already been rebuilt with the previous track at front.
