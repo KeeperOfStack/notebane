@@ -44,7 +44,7 @@ def build_before_options(base: str, http_headers: dict[str, str] | None) -> str:
 MAX_AVAILABILITY_WAIT = 30.0
 
 
-async def wait_until_available(track: "Track") -> None:
+async def wait_until_available(track: Track) -> None:
     """Sleep until YouTube will serve the track's stream URL.
 
     YouTube now returns HTTP 403 for a freshly issued stream URL until its
@@ -60,6 +60,35 @@ async def wait_until_available(track: "Track") -> None:
     delay = min(delay, MAX_AVAILABILITY_WAIT)
     log.debug("waiting %.1fs for stream availability: %s", delay, track.title)
     await asyncio.sleep(delay)
+
+
+class CountingSource(discord.AudioSource):
+    """Wraps an AudioSource and counts the packets discord.py pulls from it.
+
+    discord.py only reports an FFmpeg failure if the process has already
+    exited when the stream ends, which is racy. "Zero packets produced" is a
+    reliable signal that the stream never started (e.g. YouTube 403).
+    """
+
+    def __init__(self, inner: discord.AudioSource) -> None:
+        self.inner = inner
+        self.packets = 0
+
+    def read(self) -> bytes:
+        data = self.inner.read()
+        if data:
+            self.packets += 1
+        return data
+
+    def is_opus(self) -> bool:
+        return self.inner.is_opus()
+
+    def cleanup(self) -> None:
+        self.inner.cleanup()
+
+    @property
+    def _current_error(self) -> Exception | None:  # read by discord.py's AudioPlayer
+        return getattr(self.inner, "_current_error", None)
 
 
 # Undo/redo history depth per voice session
@@ -152,6 +181,7 @@ class GuildPlayer:
         self._history: deque[Track] = deque(maxlen=20)
         self._going_previous: bool = False  # signal: skip loop/history logic on this stop
         self._going_restart: bool = False   # signal: replay current track from beginning
+        self._interrupted: bool = False     # set when a user action stops the current track
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -210,6 +240,45 @@ class GuildPlayer:
                 log.debug("[guild=%d] voice encryption ok: %s", self.guild_id, info)
         except Exception:
             log.debug("[guild=%d] voice encryption check failed", self.guild_id, exc_info=True)
+
+    async def _stream(self, track: Track) -> int | None:
+        """Play one resolved track until it ends or is stopped.
+
+        Returns the number of audio packets sent (0 = the stream never
+        produced audio), or None if the FFmpeg source couldn't be created.
+        """
+        await wait_until_available(track)
+
+        try:
+            # Build the before_options with any headers yt-dlp requires
+            # (e.g. User-Agent for ANDROID_VR client URLs — without these
+            # YouTube returns HTTP 403 and FFmpeg exits with code 8).
+            before_opts = build_before_options(FFMPEG_BEFORE_OPTIONS, track.http_headers)
+            source = CountingSource(discord.FFmpegOpusAudio(
+                track.url,
+                before_options=before_opts,
+                options=FFMPEG_OPTIONS,
+            ))
+        except Exception:
+            log.exception("[guild=%d] FFmpeg source creation failed for %r", self.guild_id, track.title)
+            return None
+
+        self._interrupted = False
+        self._track_done.clear()
+        self.voice_client.play(source, after=self._after_play)
+
+        # Pre-resolve the next unresolved stub while this track plays,
+        # so the JIT resolve in the next loop iteration is often a no-op.
+        self._start_presolve()
+
+        # Wait for this track to finish (or be stopped). A few seconds in,
+        # verify E2EE voice is actually encrypting.
+        try:
+            await asyncio.wait_for(asyncio.shield(self._track_done.wait()), timeout=5.0)
+        except TimeoutError:
+            self._check_voice_encryption()
+            await self._track_done.wait()
+        return source.packets
 
     def _after_play(self, error: Exception | None) -> None:
         """Called by discord.py in a thread when a track finishes."""
@@ -272,36 +341,35 @@ class GuildPlayer:
             except Exception:
                 pass
 
-            await wait_until_available(track)
-
-            try:
-                # Build the before_options with any headers yt-dlp requires
-                # (e.g. User-Agent for ANDROID_VR client URLs — without these
-                # YouTube returns HTTP 403 and FFmpeg exits with code 8).
-                before_opts = build_before_options(FFMPEG_BEFORE_OPTIONS, track.http_headers)
-                source = discord.FFmpegOpusAudio(
-                    track.url,
-                    before_options=before_opts,
-                    options=FFMPEG_OPTIONS,
-                )
-            except Exception:
-                log.exception("[guild=%d] FFmpeg source creation failed for %r", self.guild_id, track.title)
+            packets = await self._stream(track)
+            if packets is None:  # FFmpeg couldn't even be spawned
                 self.current = None
                 continue
 
-            self.voice_client.play(source, after=self._after_play)
-
-            # Pre-resolve the next unresolved stub while this track plays,
-            # so the JIT resolve in the next loop iteration is often a no-op.
-            self._start_presolve()
-
-            # Wait for this track to finish (or be stopped). A few seconds in,
-            # verify E2EE voice is actually encrypting.
-            try:
-                await asyncio.wait_for(asyncio.shield(self._track_done.wait()), timeout=5.0)
-            except TimeoutError:
-                self._check_voice_encryption()
-                await self._track_done.wait()
+            # The stream produced no audio at all and nobody skipped/stopped it:
+            # YouTube refused the URL (intermittent 403) or it died on open.
+            # Fetch a fresh URL and try once more before giving up on the track.
+            if packets == 0 and not self._interrupted and self.is_connected:
+                log.warning(
+                    "[guild=%d] no audio from stream for %r — retrying once with a fresh URL",
+                    self.guild_id, track.title,
+                )
+                try:
+                    from notebane.ytdl import resolve as ytdl_resolve
+                    track = await ytdl_resolve(
+                        track.webpage_url,
+                        requester=track.requester,
+                        cookiefile=self._cookiefile,
+                    )
+                    self.current = track
+                    packets = await self._stream(track)
+                except Exception:
+                    log.exception("[guild=%d] retry resolve failed for %r", self.guild_id, track.title)
+                    packets = None
+                if packets:
+                    log.info("[guild=%d] retry succeeded for %r", self.guild_id, track.title)
+                elif not self._interrupted:
+                    log.error("[guild=%d] no audio for %r after retry — skipping", self.guild_id, track.title)
 
             # If previous() triggered this stop, skip all loop/history logic —
             # the queue has already been rebuilt with the previous track at front.
@@ -337,6 +405,7 @@ class GuildPlayer:
 
     async def skip(self) -> None:
         """Skip the current track."""
+        self._interrupted = True
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()   # triggers _after_play → _track_done.set()
 
@@ -349,6 +418,7 @@ class GuildPlayer:
         """
         if self.current is None:
             return False
+        self._interrupted = True
         self._going_restart = True
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()  # triggers _after_play → _track_done.set()
@@ -377,6 +447,7 @@ class GuildPlayer:
         new_queue.extend(rest)
         self._replace_queue(new_queue)
 
+        self._interrupted = True
         self._going_previous = True
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()  # triggers _after_play → _track_done.set()
@@ -557,6 +628,7 @@ class GuildPlayer:
 
     async def stop(self) -> None:
         """Stop playback and clear the queue."""
+        self._interrupted = True
         self.loop_track = False
         self.loop_queue = False
 
