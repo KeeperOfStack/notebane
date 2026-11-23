@@ -6,3 +6,5 @@ __pycache__/
 cookies.txt
 cookies/
 data/*.db
+.env.*
+!.env.example

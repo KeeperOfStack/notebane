@@ -305,6 +305,7 @@ async def resolve(
         thumbnail=info.get("thumbnail"),
         requester=requester,
         http_headers=info.get("http_headers") or None,
+        available_at=info.get("available_at"),
     )
     log.debug("Resolved %r → %s (%.0fs)", query, track.title, duration or 0)
     return track
