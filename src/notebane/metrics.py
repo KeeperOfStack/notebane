@@ -10,6 +10,11 @@ Metrics exposed:
   notebane_tracks_played_total   Counter — cumulative tracks played since start
   notebane_latency_seconds       Gauge   — Discord websocket latency (seconds)
   notebane_ytdl_errors_total     Counter — cumulative yt-dlp resolution errors
+  notebane_canary_ok             Gauge   — 1 if the last playback canary passed, 0 if it failed
+  notebane_canary_failures_total Counter — playback canary runs that failed
+  notebane_canary_last_run_timestamp_seconds Gauge — unix time of the last canary run
+
+Endpoints: /metrics (Prometheus), /health (liveness), /canary (JSON canary status).
 """
 
 from __future__ import annotations
@@ -42,6 +47,9 @@ ACTIVE_PLAYERS = Gauge("notebane_active_players_total", "Voice channels currentl
 TRACKS_PLAYED = Counter("notebane_tracks_played_total", "Cumulative tracks played since start")
 LATENCY = Gauge("notebane_latency_seconds", "Discord websocket latency in seconds")
 YTDL_ERRORS = Counter("notebane_ytdl_errors_total", "Cumulative yt-dlp resolution errors")
+CANARY_OK = Gauge("notebane_canary_ok", "1 if the last playback canary passed, 0 if it failed")
+CANARY_FAILURES = Counter("notebane_canary_failures_total", "Playback canary runs that failed")
+CANARY_LAST_RUN = Gauge("notebane_canary_last_run_timestamp_seconds", "Unix time of the last canary run")
 PLAY_LATENCY = Gauge(
     "notebane_play_latency_seconds",
     "Seconds from /play defer to first queue.put — last observation, labelled by kind",
@@ -64,6 +72,14 @@ def record_play_latency(kind: str, seconds: float) -> None:
 def record_track_played() -> None:
     """Call this each time a track starts playing."""
     TRACKS_PLAYED.inc()
+
+
+def record_canary(ok: bool, at: float) -> None:
+    """Record the outcome of a playback canary run."""
+    CANARY_OK.set(1 if ok else 0)
+    CANARY_LAST_RUN.set(at)
+    if not ok:
+        CANARY_FAILURES.inc()
 
 
 def record_ytdl_error() -> None:
@@ -107,18 +123,27 @@ async def start_metrics_server(
         return web.Response(body=data, content_type=CONTENT_TYPE_LATEST)
 
     async def handle_health(_request: web.Request) -> web.Response:
+        from notebane import canary
+        res = canary.last_result
+        if canary.fail_health() and res is not None and not res.ok:
+            return web.Response(status=503, text="canary failing")
         return web.Response(text="ok")
+
+    async def handle_canary(_request: web.Request) -> web.Response:
+        from notebane import canary
+        return web.json_response(canary.status())
 
     async def _serve() -> None:
         app = web.Application()
         app.router.add_get("/metrics", handle_metrics)
         app.router.add_get("/health", handle_health)
+        app.router.add_get("/canary", handle_canary)
 
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        log.info("Metrics server listening on :%d  — /metrics  /health", port)
+        log.info("Metrics server listening on :%d  — /metrics  /health  /canary", port)
 
         try:
             await asyncio.Event().wait()  # run until cancelled

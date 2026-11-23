@@ -19,6 +19,8 @@
 - ⚡ **Fast start** — single-URL `/play` under 1.5s, playlist first-track under 2.5s (see [perf baseline](docs/phase11-quickplay/perf-baseline.md))
 - 🧠 **Smart cookies** — YouTube cookies only sent on age-gate retries or ≥200-entry playlists, never on public content (see [cookie policy](docs/phase11-quickplay/cookie-policy.md))
 - 🎛️ **Now Playing controls** — interactive ⏸/⏭/⏹ buttons on every track start message
+- 🚨 **Self-monitoring** — the bot self-tests playback every few hours and posts to a Discord webhook when YouTube, yt-dlp or Discord voice breaks (see [owner alerts](docs/deployment.md#owner-alerts--playback-canary))
+- 🔄 **Self-updating yt-dlp** — upgraded on every start; the bot restarts itself when idle to load new releases
 - 📃 **Playlist support** — full YouTube playlist loading via yt-dlp internal API (~2× more tracks than unauthenticated HTML scraping), with parallel background resolve for fast queue loading
 
 ---
@@ -63,6 +65,14 @@ docker run -d \
   --log-opt max-file=3 \
   ghcr.io/keeperofstack/notebane:latest
 ```
+
+**3. (Recommended) Get alerted when playback breaks.** Create a webhook in a private channel (*Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL*) and add it to the command above:
+
+```bash
+  -e ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/... \
+```
+
+No extra bot is needed: the existing bot posts to the webhook. About 2 minutes after start you'll get a *✅ playback canary passing* message. Details: [Owner Alerts & Playback Canary](docs/deployment.md#owner-alerts--playback-canary).
 
 See the full [Deployment Guide](docs/deployment.md) for Portainer, Compose, and bind mount options.
 

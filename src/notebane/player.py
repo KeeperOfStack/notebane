@@ -236,6 +236,16 @@ class GuildPlayer:
                     "listeners will hear nothing. Check the davey version. %s",
                     self.guild_id, info,
                 )
+                from notebane import alerts
+                alerts.notify(
+                    "dave-not-ready",
+                    "Voice encryption not active — listeners hear nothing",
+                    "Discord requires DAVE end-to-end encryption, but the bot's DAVE session isn't "
+                    "ready, so audio is sent unencrypted and dropped by clients (bot shows as "
+                    f"speaking, no sound). Guild `{self.guild_id}`.\n`{info}`\n"
+                    "Usual cause: an incompatible `davey` / `discord.py` version.",
+                    "error",
+                )
             else:
                 log.debug("[guild=%d] voice encryption ok: %s", self.guild_id, info)
         except Exception:
@@ -370,6 +380,15 @@ class GuildPlayer:
                     log.info("[guild=%d] retry succeeded for %r", self.guild_id, track.title)
                 elif not self._interrupted:
                     log.error("[guild=%d] no audio for %r after retry — skipping", self.guild_id, track.title)
+                    from notebane import alerts
+                    alerts.notify(
+                        "skip-after-retry",
+                        "Track skipped — stream produced no audio after retry",
+                        f"**{track.title}** (<{track.webpage_url}>) in guild `{self.guild_id}`. "
+                        "Usually YouTube refusing the stream (403). If this repeats, check the "
+                        "canary and the yt-dlp version.",
+                        "warning",
+                    )
 
             # If previous() triggered this stop, skip all loop/history logic —
             # the queue has already been rebuilt with the previous track at front.

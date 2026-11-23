@@ -101,6 +101,15 @@ async def start_ytdlp_updater(
                 log.info("yt-dlp %s pending — waiting for all playback to stop before restarting", newer)
                 await asyncio.sleep(IDLE_POLL_INTERVAL)
             log.warning("Restarting to load yt-dlp %s (container restart policy brings the bot back)", newer)
+            from notebane import alerts
+            await alerts.send(
+                "ytdlp-restart",
+                f"Restarting to load yt-dlp {newer}",
+                f"Updating from `{_current_version()}`. The container restart policy brings the bot back "
+                "in a few seconds; if it doesn't, check the restart policy (`unless-stopped`).",
+                "info",
+                force=True,
+            )
             await request_restart()  # type: ignore[misc]
             return
 
